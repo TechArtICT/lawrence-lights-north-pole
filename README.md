@@ -44,10 +44,10 @@ The Bluetooth password is committed to this public repo on purpose, for simplici
 1. Power on with nobody under the sensor — it calibrates the ground automatically (~1 s).
 2. `watch on` to see live readings.
 3. Find the LEDs that line up with the 1 ft and 6 ft marks with `led <n>`, then:
-   `set cal_low_led <n>`, `set cal_high_led <n>`.
-4. Set the visible range: `set first_view_led <n>`, `set last_view_led <n>`.
+   `set callowled <n>`, `set calhighled <n>`.
+4. Set the visible range: `set firstled <n>`, `set lastled <n>`.
 5. Optional: `calibrate ground` to save the lens height as the fallback.
-6. Tune `brightness_max`, `idle_level_pct`, `min_trigger_cm` as needed. Everything set this way is saved to flash.
+6. Tune `brightness`, `idlelevel`, `mintrigger` as needed. Everything set this way is saved to flash.
 
 ### Bench testing (no real measurements needed)
 

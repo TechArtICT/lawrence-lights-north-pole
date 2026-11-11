@@ -48,7 +48,7 @@
 #define DEF_RISE_SPEED             60.0f  // average LEDs/second for the thermometer rise
 #define DEF_DRAIN_SPEED            40.0f  // average LEDs/second for the drain outro
 #define DEF_IDLE_FADE_IN_MS      1000
-#define DEF_IDLE_LEVEL_PCT         15     // idle brightness as % of brightness_max; show runs at 100%
+#define DEF_IDLE_LEVEL_PCT         15     // idle brightness as % of brightness; show runs at 100%
 #define DEF_IDLE_SPEED_PCT        100     // idle shimmer speed, % of designed speed
 
 // Compile-time only
@@ -88,7 +88,7 @@ static const char* RC_NAMES[] = {"unknown","absent","low","person"};
 
 enum Src { SRC_USB, SRC_BT };
 enum PType { PT_F, PT_I };
-struct Param { const char* name; const char* key; PType type; void* ptr; float minV; float maxV; };
+struct Param { const char* name; const char* key; const char* unit; PType type; void* ptr; float minV; float maxV; };
 
 struct Comet { float pos; float speed; Col c; bool on; };
 
@@ -115,28 +115,28 @@ struct Settings {
 Settings S;
 
 Param params[] = {
-  {"sensor_height_cm",    "sens_h",     PT_F, &S.sensorHeightCm,    50, 1000},
-  {"ground_clamp_cm",     "gclamp",     PT_F, &S.groundClampCm,      0, 200},
-  {"min_trigger_cm",      "min_trig",   PT_F, &S.minTriggerCm,      20, 250},
-  {"min_flux",            "min_flux",   PT_I, &S.minFlux,            0, 65535},
-  {"presence_stable_ms",  "pres_ms",    PT_I, &S.presenceStableMs,   0, 10000},
-  {"absent_margin_cm",    "abs_cm",     PT_F, &S.absentMarginCm,     1, 100},
-  {"hold_after_leave_ms", "hold_ms",    PT_I, &S.holdAfterLeaveMs,   0, 30000},
-  {"remeasure_delta_cm",  "rem_cm",     PT_F, &S.remeasureDeltaCm,   1, 100},
-  {"remeasure_stable_ms", "rem_ms",     PT_I, &S.remeasureStableMs,  0, 10000},
-  {"first_view_led",      "first_led",  PT_I, &S.firstViewLed,       0, NUM_PIXELS - 1},
-  {"last_view_led",       "last_led",   PT_I, &S.lastViewLed,        0, NUM_PIXELS - 1},
-  {"cal_low_led",         "cal_lo_led", PT_I, &S.calLowLed,          0, NUM_PIXELS - 1},
-  {"cal_low_cm",          "cal_lo_cm",  PT_F, &S.calLowCm,           0, 400},
-  {"cal_high_led",        "cal_hi_led", PT_I, &S.calHighLed,         0, NUM_PIXELS - 1},
-  {"cal_high_cm",         "cal_hi_cm",  PT_F, &S.calHighCm,          0, 400},
-  {"brightness_max",      "bright",     PT_I, &S.brightnessMax,      1, 255},
-  {"dazzle_ms",           "dazzle_ms",  PT_I, &S.dazzleMs,         500, 20000},
-  {"rise_speed",          "rise_spd",   PT_F, &S.riseSpeed,          1, 1000},
-  {"drain_speed",         "drain_spd",  PT_F, &S.drainSpeed,         1, 1000},
-  {"idle_fade_in_ms",     "idle_fade",  PT_I, &S.idleFadeInMs,       0, 10000},
-  {"idle_level_pct",      "idle_pct",   PT_I, &S.idleLevelPct,       0, 100},
-  {"idle_speed_pct",      "idle_spd",   PT_I, &S.idleSpeedPct,      10, 500},
+  {"sensorheight",   "sens_h",     "cm",       PT_F, &S.sensorHeightCm,    50, 1000},
+  {"groundclamp",    "gclamp",     "cm",       PT_F, &S.groundClampCm,      0, 200},
+  {"mintrigger",     "min_trig",   "cm",       PT_F, &S.minTriggerCm,      20, 250},
+  {"minflux",        "min_flux",   "",         PT_I, &S.minFlux,            0, 65535},
+  {"presencetime",   "pres_ms",    "ms",       PT_I, &S.presenceStableMs,   0, 10000},
+  {"absentmargin",   "abs_cm",     "cm",       PT_F, &S.absentMarginCm,     1, 100},
+  {"holdtime",       "hold_ms",    "ms",       PT_I, &S.holdAfterLeaveMs,   0, 30000},
+  {"remeasuredelta", "rem_cm",     "cm",       PT_F, &S.remeasureDeltaCm,   1, 100},
+  {"remeasuretime",  "rem_ms",     "ms",       PT_I, &S.remeasureStableMs,  0, 10000},
+  {"firstled",       "first_led",  "raw led",  PT_I, &S.firstViewLed,       0, NUM_PIXELS - 1},
+  {"lastled",        "last_led",   "raw led",  PT_I, &S.lastViewLed,        0, NUM_PIXELS - 1},
+  {"callowled",      "cal_lo_led", "raw led",  PT_I, &S.calLowLed,          0, NUM_PIXELS - 1},
+  {"callowcm",       "cal_lo_cm",  "cm",       PT_F, &S.calLowCm,           0, 400},
+  {"calhighled",     "cal_hi_led", "raw led",  PT_I, &S.calHighLed,         0, NUM_PIXELS - 1},
+  {"calhighcm",      "cal_hi_cm",  "cm",       PT_F, &S.calHighCm,          0, 400},
+  {"brightness",     "bright",     "0-255",    PT_I, &S.brightnessMax,      1, 255},
+  {"dazzletime",     "dazzle_ms",  "ms",       PT_I, &S.dazzleMs,         500, 20000},
+  {"risespeed",      "rise_spd",   "leds/s",   PT_F, &S.riseSpeed,          1, 1000},
+  {"drainspeed",     "drain_spd",  "leds/s",   PT_F, &S.drainSpeed,         1, 1000},
+  {"idlefade",       "idle_fade",  "ms",       PT_I, &S.idleFadeInMs,       0, 10000},
+  {"idlelevel",      "idle_pct",   "%",        PT_I, &S.idleLevelPct,       0, 100},
+  {"idlespeed",      "idle_spd",   "%",        PT_I, &S.idleSpeedPct,      10, 500},
 };
 static const int N_PARAMS = sizeof(params) / sizeof(params[0]);
 
@@ -287,8 +287,8 @@ void loadSettings() {
   }
 }
 void printParam(Param& p) {
-  if (p.type == PT_F) out("  %-20s %.2f", p.name, *(float*)p.ptr);
-  else                out("  %-20s %ld", p.name, (long)*(int32_t*)p.ptr);
+  if (p.type == PT_F) out("  %-15s %.2f %s", p.name, *(float*)p.ptr, p.unit);
+  else                out("  %-15s %ld %s", p.name, (long)*(int32_t*)p.ptr, p.unit);
 }
 
 // =====================================================================
@@ -303,7 +303,7 @@ void enterIdle() { setState(ST_IDLE); idleStart = nowMs; personStreakStart = 0; 
 void setGround(float g) { groundCm = g; groundRefCm = g; }
 
 // Ground calibration: ~1 s of readings with nobody under the sensor.
-// save=false at boot (runtime only); save=true from "calibrate ground" (writes sensor_height_cm).
+// save=false at boot (runtime only); save=true from "calibrate ground" (writes sensorheight).
 void startCalib(bool save) { calN = 0; calSave = save; setState(ST_CALIB); }
 void finishCalib() {
   std::sort(calBuf, calBuf + calN);
@@ -313,7 +313,7 @@ void finishCalib() {
   if (calSave) {
     if (med >= 50 && med <= 1000) {
       S.sensorHeightCm = med; prefs.putFloat("sens_h", med);
-      out("saved sensor_height_cm = %.1f", med);
+      out("saved sensorheight = %.1f cm", med);
     } else out("not saved: %.1f cm is outside 50..1000", med);
   }
   enterIdle();
@@ -492,7 +492,7 @@ void updateState() {
     uint32_t el = nowMs - stateStart;
     if (calN >= G_N || (el >= 1000 && calN >= MIN_SAMPLES)) finishCalib();
     else if (el >= 3000) {
-      out("%sground calibration failed (%d valid readings); using sensor_height_cm %.1f", simTag(), calN, S.sensorHeightCm);
+      out("%sground calibration failed (%d valid readings); using sensorheight %.1f", simTag(), calN, S.sensorHeightCm);
       setGround(S.sensorHeightCm);
       enterIdle();
     }
@@ -537,7 +537,7 @@ void updateState() {
 // Idle "babbling brook": three ripple waves at different sizes and speeds
 // (two flowing up, one flowing down) interfere into an irregular shimmer,
 // with brief soft glints on top. Drawn at full scale; renderFrame scales it
-// down to idle_level_pct. idle_speed_pct scales the motion.
+// down to idlelevel. idlespeed scales the motion.
 float idleGlint[NUM_PIXELS];
 void renderIdle(float t, float dt) {
   float k = S.idleSpeedPct / 100.0f;
@@ -810,7 +810,7 @@ void printStatus() {
   out("--- status ---");
   out("state=%s sim=%s demo=%s watch=%s", STATE_NAMES[state], simOn ? "on" : "off", demoOn ? "on" : "off", watchOn ? "on" : "off");
   out("last: dist=%u cm flux=%u height=%.1f cm (%s) temp=%.1f C", lastDist, lastFlux, lastHeight, RC_NAMES[lastClass], lastTempC);
-  out("ground=%.1f cm (calibrated=%.1f, sensor_height_cm=%.1f)", groundCm, groundRefCm, S.sensorHeightCm);
+  out("ground=%.1f cm (calibrated=%.1f, sensorheight=%.1f)", groundCm, groundRefCm, S.sensorHeightCm);
   out("last measured=%.1f cm  visible LEDs=%d (raw %d..%d) reversed=%s", measuredCm, nVis, visLo, visHi, reversed ? "yes" : "no");
   out("top visible LED = %.1f cm", visToHeight(nVis - 1));
   out("visitors: season=%lu tonight=%lu  uptime=%lus", (unsigned long)seasonCount, (unsigned long)tonightCount, (unsigned long)(nowMs / 1000));
@@ -821,7 +821,7 @@ void printHelp() {
   out("help | status | get | count | play list | watch on|off");
   out("unlock <pw>                  (Bluetooth only; USB is always unlocked)");
   out("set <name> <value> | defaults | count reset | reboot");
-  out("calibrate ground             nobody under the sensor; saves sensor_height_cm");
+  out("calibrate ground             nobody under the sensor; saves sensorheight");
   out("led <n> | led off            light one raw LED for calibration");
   out("sim on|off | sim height <cm> | sim leave | sim noise <cm>");
   out("sim dropout on|off | sim fault | demo on|off");
@@ -877,12 +877,12 @@ void handleCmd(String line, Src src) {
       else                { oldI = *(int32_t*)p.ptr; *(int32_t*)p.ptr = (int32_t)lroundf(v); }
       if (!validMapping()) {
         if (p.type == PT_F) *(float*)p.ptr = oldF; else *(int32_t*)p.ptr = oldI;
-        out("rejected: calibration points must differ (cal_high_cm > cal_low_cm, LEDs not equal)");
+        out("rejected: calibration points must differ (calhighcm > callowcm, LEDs not equal)");
         return;
       }
       if (p.type == PT_F) prefs.putFloat(p.key, *(float*)p.ptr); else prefs.putInt(p.key, *(int32_t*)p.ptr);
       recomputeMapping();
-      if (!strcmp(p.name, "sensor_height_cm")) setGround(S.sensorHeightCm);
+      if (!strcmp(p.name, "sensorheight")) setGround(S.sensorHeightCm);
       printParam(p);
       return;
     }

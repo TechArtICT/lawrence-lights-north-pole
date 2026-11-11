@@ -19,49 +19,49 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 
 | Setting | Default | Notes |
 |---|---|---|
-| `sensor_height_cm` | 230 | Lens to ground. Fallback if boot calibration fails; `calibrate ground` sets it. |
-| `ground_clamp_cm` | 30 | Ongoing ground learning may drift at most this far from the calibrated ground. |
-| `min_trigger_cm` | 70 | Shortest height that starts the show. Set with toddlers in mind. |
-| `min_flux` | 100 | Below this (or dist = 0, or flux 65535) a reading is "unknown", not "gone". |
-| `presence_stable_ms` | 500 | Height must hold this long to trigger. |
-| `absent_margin_cm` | 15 | Reading within this of ground = nobody there. |
-| `hold_after_leave_ms` | 1000 | Show continues this long after the person steps away. |
-| `remeasure_delta_cm` | 10 | Height change that counts as a different person. |
-| `remeasure_stable_ms` | 500 | New height must hold this long before restarting. |
-| `first_view_led` | 0 | Raw index of lowest-numbered visible LED. |
-| `last_view_led` | 145 | Raw index of highest-numbered visible LED. |
-| `cal_low_led` / `cal_low_cm` | 20 / 30.48 | Raw LED index lined up with the 1 ft mark. Placeholder index; set in field. |
-| `cal_high_led` / `cal_high_cm` | 130 / 182.88 | Raw LED index lined up with the 6 ft mark. Placeholder index; set in field. |
-| `brightness_max` | 128 (of 255) | Global cap. |
-| `dazzle_ms` | 3000 | Also the measurement window. |
-| `rise_speed` | 60 LEDs/s | Average speed; ease-out (fast start, slows near the top). |
-| `drain_speed` | 40 LEDs/s | Average speed of the drain outro. |
-| `idle_fade_in_ms` | 1000 | Idle fades in after the outro. |
-| `idle_level_pct` | 15 | Idle brightness as % of `brightness_max`. Everything else runs at 100%, so activation "comes to life". |
-| `idle_speed_pct` | 100 | Idle shimmer speed (10–500). |
+| `sensorheight` | 230 | Lens to ground. Fallback if boot calibration fails; `calibrate ground` sets it. |
+| `groundclamp` | 30 | Ongoing ground learning may drift at most this far from the calibrated ground. |
+| `mintrigger` | 70 | Shortest height that starts the show. Set with toddlers in mind. |
+| `minflux` | 100 | Below this (or dist = 0, or flux 65535) a reading is "unknown", not "gone". |
+| `presencetime` | 500 | Height must hold this long to trigger. |
+| `absentmargin` | 15 | Reading within this of ground = nobody there. |
+| `holdtime` | 1000 | Show continues this long after the person steps away. |
+| `remeasuredelta` | 10 | Height change that counts as a different person. |
+| `remeasuretime` | 500 | New height must hold this long before restarting. |
+| `firstled` | 0 | Raw index of lowest-numbered visible LED. |
+| `lastled` | 145 | Raw index of highest-numbered visible LED. |
+| `callowled` / `callowcm` | 20 / 30.48 | Raw LED index lined up with the 1 ft mark. Placeholder index; set in field. |
+| `calhighled` / `calhighcm` | 130 / 182.88 | Raw LED index lined up with the 6 ft mark. Placeholder index; set in field. |
+| `brightness` | 128 (of 255) | Global cap. |
+| `dazzletime` | 3000 | Also the measurement window. |
+| `risespeed` | 60 LEDs/s | Average speed; ease-out (fast start, slows near the top). |
+| `drainspeed` | 40 LEDs/s | Average speed of the drain outro. |
+| `idlefade` | 1000 | Idle fades in after the outro. |
+| `idlelevel` | 15 | Idle brightness as % of `brightness`. Everything else runs at 100%, so activation "comes to life". |
+| `idlespeed` | 100 | Idle shimmer speed (10–500). |
 
 Compile-time only: `SIM_AT_BOOT` (false), `BT_NAME` (`NorthPoleLidar`), `BT_PASSWORD` (`ll`).
 
 ### Height → LED mapping
 
 - Linear interpolation between the two calibration points; covers LED spacing, strip start offset and stretch in one step.
-- Strip direction is derived from the calibration points: if `cal_high_led` < `cal_low_led`, the strip is reversed. No separate reverse flag.
-- All animations work in "visible position" (0 = lowest visible LED), mapped to raw indices through `first_view_led` / `last_view_led` and the direction.
+- Strip direction is derived from the calibration points: if `calhighled` < `callowled`, the strip is reversed. No separate reverse flag.
+- All animations work in "visible position" (0 = lowest visible LED), mapped to raw indices through `firstled` / `lastled` and the direction.
 - Height at or above the height of the top visible LED → "off the charts".
 
 ## States
 
-- **CALIBRATE** — at boot (nobody is under the sensor at power-on): strip dark ~1 s, median of readings = ground. Not saved to flash. Fewer than 20 valid readings in 3 s → fall back to `sensor_height_cm`. Also entered by `calibrate ground` (which saves) and `sim off`.
-- **IDLE** — attract animation at `idle_level_pct`. Ground keeps learning from readings with nobody present (median of ~1 s batches, clamped to ±`ground_clamp_cm` of the calibrated ground). Trigger when height ≥ `min_trigger_cm` holds for `presence_stable_ms` → DAZZLE.
-- **DAZZLE** — random dazzle animation for `dazzle_ms`. Collect every valid sample; height = **median**. Person leaves → dissolve outro → IDLE.
+- **CALIBRATE** — at boot (nobody is under the sensor at power-on): strip dark ~1 s, median of readings = ground. Not saved to flash. Fewer than 20 valid readings in 3 s → fall back to `sensorheight`. Also entered by `calibrate ground` (which saves) and `sim off`.
+- **IDLE** — attract animation at `idlelevel`. Ground keeps learning from readings with nobody present (median of ~1 s batches, clamped to ±`groundclamp` of the calibrated ground). Trigger when height ≥ `mintrigger` holds for `presencetime` → DAZZLE.
+- **DAZZLE** — random dazzle animation for `dazzletime`. Collect every valid sample; height = **median**. Person leaves → dissolve outro → IDLE.
 - **RISE** — column grows from the bottom to the measured height with ease-out.
 - **SHOW** — random show mode with a gold star at the height (off-the-charts variant if above the top LED); loops until the person leaves.
-  - Height shifts by `remeasure_delta_cm` for `remeasure_stable_ms` → back to DAZZLE (different person).
-  - Gone for `hold_after_leave_ms` → OUTRO.
+  - Height shifts by `remeasuredelta` for `remeasuretime` → back to DAZZLE (different person).
+  - Gone for `holdtime` → OUTRO.
 - **OUTRO** — random outro animation → IDLE (idle fades in, never a cut). A new person arriving during the outro starts a new dazzle.
 - **FAULT** — no frames from the sensor for ~1 s: idle animation only, report the fault, return to IDLE when frames resume.
 
-Height = ground distance − measured distance. Gone = no person reading for `hold_after_leave_ms` and a ground-level reading seen since (or 5 s with no person reading at all). Unknown readings (low flux, dist 0) never count as gone.
+Height = ground distance − measured distance. Gone = no person reading for `holdtime` and a ground-level reading seen since (or 5 s with no person reading at all). Unknown readings (low flux, dist 0) never count as gone.
 
 ## Animations
 
@@ -98,7 +98,7 @@ Palette: Christmas red, green, white, gold. Gamma-corrected (2.2). All non-block
 
 ## USB serial and Bluetooth
 
-Both channels are identical: all status output goes to both, and every command is accepted from either. USB serial (115200, line ending "Newline") needs no `unlock` — physical access to the board is treated as trusted. Bluetooth requires `unlock ll` for anything that changes state; the unlock lasts until the client disconnects.
+Both channels are identical: all status output goes to both, and every command is accepted from either. Commands and setting names are all lowercase with no underscores, for easy phone typing (input is lowercased anyway); `get` shows each setting's unit. USB serial (115200, line ending "Newline") needs no `unlock` — physical access to the board is treated as trusted. Bluetooth requires `unlock ll` for anything that changes state; the unlock lasts until the client disconnects.
 
 ### Status output (always on)
 
@@ -119,7 +119,7 @@ Both channels are identical: all status output goes to both, and every command i
 | `unlock <pw>` | — | Unlock (Bluetooth only). |
 | `set <name> <value>` | yes | Apply immediately and save to flash. |
 | `defaults` | yes | Restore code defaults (keeps the visitor count). |
-| `calibrate ground` | yes | Nobody under the sensor: ~1 s of readings, median saved as `sensor_height_cm`. |
+| `calibrate ground` | yes | Nobody under the sensor: ~1 s of readings, median saved as `sensorheight`. |
 | `led <n>` / `led off` | yes | Light one raw LED (for calibration). Suspends the normal show until `led off`. |
 | `count reset` | yes | Zero the counts. |
 | `reboot` | yes | Restart. |
