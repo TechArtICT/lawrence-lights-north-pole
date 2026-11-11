@@ -30,8 +30,10 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 | `remeasuretime` | 500 | New height must hold this long before restarting. |
 | `firstled` | 0 | Raw index of lowest-numbered visible LED. |
 | `lastled` | 145 | Raw index of highest-numbered visible LED. |
-| `callowled` / `callowcm` | 20 / 30.48 | Raw LED index lined up with the 1 ft mark. Placeholder index; set in field. |
-| `calhighled` / `calhighcm` | 130 / 182.88 | Raw LED index lined up with the 6 ft mark. Placeholder index; set in field. |
+| `callowled` | 20 | Raw LED index lined up with the low calibration mark. Placeholder; set in field. |
+| `callowcm` | 30.48 | Height of that mark in cm (30.48 cm = 1 ft). |
+| `calhighled` | 130 | Raw LED index lined up with the high calibration mark. Placeholder; set in field. |
+| `calhighcm` | 182.88 | Height of that mark in cm (182.88 cm = 6 ft). |
 | `brightness` | 128 (of 255) | Global cap. |
 | `dazzletime` | 3000 | Also the measurement window. |
 | `risespeed` | 60 LEDs/s | Average speed; ease-out (fast start, slows near the top). |
