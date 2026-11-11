@@ -37,6 +37,8 @@ Connect over USB serial (115200, line ending "Newline") or Bluetooth Classic ser
 
 Over Bluetooth, commands that change anything need `unlock ll` first. USB is always unlocked.
 
+The Bluetooth password is committed to this public repo on purpose, for simplicity. It only keeps passersby from casually changing settings; it isn't meant as real security.
+
 ### Field setup
 
 1. Power on with nobody under the sensor — it calibrates the ground automatically (~1 s).
@@ -58,7 +60,7 @@ Simulated runs don't count as visitors.
 
 ## Docs
 
-- [`docs/software-spec.txt`](docs/software-spec.txt) — full spec (DokuWiki format): settings, states, animations, commands.
+- [`docs/software-spec.md`](docs/software-spec.md) — full spec: settings, states, animations, commands.
 
 ## License
 
