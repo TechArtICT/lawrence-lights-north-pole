@@ -2,14 +2,14 @@
 
 "How tall this winter?" — a candy-cane pole for Lawrence Lights 2026 that measures your height when you stand next to it, then shows it on a 146-LED strip running up the printed measuring scale.
 
-A TFmini Plus lidar looks down from the top of the pole. When someone stands underneath, a random "dazzle" animation plays while the height is measured. Then a column rises like a thermometer to their height, topped with a gold star. The pole shimmers dimly when nobody is there.
+An Intel RealSense depth camera looks down from the arm above the pole; a Rock64 works out the height and sends it to the ESP32 that runs the LEDs. When someone stands underneath, a random "dazzle" animation plays while the height is measured. Then a column rises like a thermometer to their height, topped with a gold star. The pole shimmers dimly when nobody is there.
 
 ## Hardware
 
 | Part | Notes |
 |---|---|
 | ESP32-WROOM-32 dev board | Arduino board: **ESP32 Dev Module** |
-| Benewake TFmini Plus | IP65 ToF lidar, UART 115200 |
+| Intel RealSense D435i + Rock64 | Depth camera on the Rock64's USB 2 port; `rock64/height.py` |
 | 146 × WS2812-type 5V pixels | Data through a 3.3 V → 5 V level shifter |
 | 5V 12A supply | All grounds common |
 
@@ -17,9 +17,7 @@ A TFmini Plus lidar looks down from the top of the pole. When someone stands und
 
 | From | To |
 |---|---|
-| TFmini green (sensor TX) | IO16 |
-| TFmini white (sensor RX) | IO17 |
-| TFmini red / black | 5V / GND |
+| ESP32 USB (VBUS disconnected) | Rock64 USB |
 | IO18 | level shifter → 300–500 Ω → strip DIN |
 | ESP32 5V / GND | supply + / − |
 
@@ -28,8 +26,12 @@ Add a 500–1000 µF capacitor across the strip's power input. Program with USB 
 ## Building
 
 1. Arduino IDE with the **esp32 by Espressif Systems** board package.
-2. Library Manager: **NeoPixelBus by Makuna**. (BluetoothSerial and Preferences come with the ESP32 core; TFmini frames are parsed directly, no TFmini library needed.)
+2. Library Manager: **NeoPixelBus by Makuna**. (BluetoothSerial and Preferences come with the ESP32 core.)
 3. Open `north_pole/north_pole.ino`, board **ESP32 Dev Module**, upload.
+
+Or on the Rock64: `bash rock64/setup-arduino.sh` once, then `bash rock64/flash.sh` to compile and flash over the USB link.
+
+Rock64 (Ubuntu 20.04, Python 3.9 venv at `~/rs`): `~/rs/bin/pip install pyrealsense2 numpy scipy esptool`, then `~/rs/bin/python rock64/height.py calibrate` with nobody in view, and `~/rs/bin/python rock64/height.py` to run.
 
 ## Using it
 
@@ -41,12 +43,12 @@ The Bluetooth password is committed to this public repo on purpose, for simplici
 
 ### Field setup
 
-1. Power on with nobody under the sensor — it calibrates the ground automatically (~1 s).
+1. Power on. The Rock64 starts `height.py`, which links to the ESP32.
 2. `watch on` to see live readings.
 3. Find the LEDs that line up with the 1 ft and 6 ft marks with `led <n>`, then:
    `set callowled <n>`, `set calhighled <n>`.
 4. Set the visible range: `set firstled <n>`, `set lastled <n>`.
-5. Optional: `calibrate ground` to save the lens height as the fallback.
+5. `calibrate camera` with nobody in view (starts after 5 s), and set the standing box with `boxw`, `boxd`, `boxx`, `boxy`.
 6. Tune `brightness`, `idlelevel`, `mintrigger` as needed. Everything set this way is saved to flash.
 
 ### Bench testing (no real measurements needed)

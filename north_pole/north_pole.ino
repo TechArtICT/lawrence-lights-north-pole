@@ -4,9 +4,16 @@
   Board:     ESP32-WROOM-32  (Arduino IDE board: "ESP32 Dev Module")
   Libraries: NeoPixelBus by Makuna (Library Manager).
              BluetoothSerial and Preferences ship with the ESP32 core.
-  Sensor:    TFmini Plus frames are parsed directly (no TFMPlus library).
+  Sensor:    RealSense D435i on a Rock64 (rock64/height.py). The Rock64 sends heights
+             over the USB serial link; lines starting with '#' are sensor traffic:
+               Rock64 -> ESP32:  "#H <cm>" height above the empty scene (0 = nobody)
+                                 "#U"      unknown (e.g. head cut off at the frame edge)
+                                 "#I <text>" info, printed as-is
+                                 "#HELLO"  Rock64 (re)started: ESP32 resends the box
+               ESP32 -> Rock64:  "#BOX <w> <d> <x> <y>" standing box in cm
+                                 "#CAL"    record the empty scene
 
-  Wiring:    TFmini green (TX) -> IO16, white (RX) -> IO17, red -> 5V, black -> GND
+  Wiring:    USB (VBUS disconnected) -> Rock64
              IO18 -> level shifter -> 300-500 ohm -> strip DIN
              All grounds common.
 
@@ -28,10 +35,13 @@
 //  Change here, or live with "set <name> <value>" (saved to flash and
 //  survives power-off; "defaults" restores these values).
 // =====================================================================
-#define DEF_SENSOR_HEIGHT_CM      230.0f  // lens to ground. Fallback/clamp for auto-learned ground
-#define DEF_GROUND_CLAMP_CM        30.0f  // learned ground may differ from sensor height by at most this
+#define DEF_CAL_FACTOR              1.0f  // camera height x this ...
+#define DEF_CAL_OFFSET_CM           0.0f  // ... + this = displayed height
+#define DEF_BOX_W_CM              100.0f  // standing box (cm on the floor), sent to the Rock64
+#define DEF_BOX_D_CM              100.0f
+#define DEF_BOX_X_CM                0.0f  // box center offset from the point under the camera
+#define DEF_BOX_Y_CM                0.0f
 #define DEF_MIN_TRIGGER_CM         70.0f  // shortest height that starts the show
-#define DEF_MIN_FLUX              100     // below this (or dist 0) a reading is "unknown"
 #define DEF_PRESENCE_STABLE_MS    500     // person must be there this long to trigger
 #define DEF_ABSENT_MARGIN_CM       15.0f  // height <= this = nobody there
 #define DEF_HOLD_AFTER_LEAVE_MS  1000     // keep showing this long after they step away
@@ -59,15 +69,12 @@
 // Hardware
 #define NUM_PIXELS   146
 #define PIXEL_PIN     18
-#define LIDAR_RX      16
-#define LIDAR_TX      17
 
 // Internal tuning
-#define FAULT_MS          1000   // no sensor frames this long -> FAULT
+#define FAULT_MS          1000   // no sensor lines this long -> FAULT
 #define STALE_GONE_MS     5000   // no person reading this long -> gone, even without a ground reading
 #define MIN_SAMPLES         20   // fewer valid samples in the dazzle -> measurement fails
 #define MAX_DZ            2000   // sample buffer (20 s at 100 Hz)
-#define G_N                101   // ground-learning batch size (~1 s)
 #define WDT_TIMEOUT_S        8
 #define FRAME_MS            16   // ~60 fps
 
@@ -80,8 +87,8 @@ static const Col C_GREEN = {0.0f, 1.0f, 0.0f};
 static const Col C_WHITE = {1.0f, 1.0f, 1.0f};
 static const Col C_GOLD  = {1.0f, 0.55f, 0.0f};
 
-enum State { ST_IDLE, ST_DAZZLE, ST_RISE, ST_SHOW, ST_OUTRO, ST_FAULT, ST_PLAY, ST_LEDTEST, ST_CALIB };
-static const char* STATE_NAMES[] = {"idle","dazzle","rise","show","outro","fault","play","ledtest","calibrate"};
+enum State { ST_IDLE, ST_DAZZLE, ST_RISE, ST_SHOW, ST_OUTRO, ST_FAULT, ST_PLAY, ST_LEDTEST };
+static const char* STATE_NAMES[] = {"idle","dazzle","rise","show","outro","fault","play","ledtest"};
 
 enum ReadClass { RC_UNKNOWN, RC_ABSENT, RC_LOW, RC_PERSON };
 static const char* RC_NAMES[] = {"unknown","absent","low","person"};
@@ -102,9 +109,10 @@ static const char* OUTRO_NAMES[]  = {"drain","dissolve"};
 static const int N_DAZZLE = 6, N_SHOW = 3, N_OUTRO = 2;
 
 struct Settings {
-  float   sensorHeightCm, groundClampCm, minTriggerCm, absentMarginCm, remeasureDeltaCm;
+  float   calFactor, calOffsetCm, boxW, boxD, boxX, boxY;
+  float   minTriggerCm, absentMarginCm, remeasureDeltaCm;
   float   calLowCm, calHighCm, riseSpeed, drainSpeed;
-  int32_t minFlux, presenceStableMs, holdAfterLeaveMs, remeasureStableMs;
+  int32_t presenceStableMs, holdAfterLeaveMs, remeasureStableMs;
   int32_t firstViewLed, lastViewLed, calLowLed, calHighLed, brightnessMax, dazzleMs, idleFadeInMs;
   int32_t idleLevelPct, idleSpeedPct;
 };
@@ -115,10 +123,13 @@ struct Settings {
 Settings S;
 
 Param params[] = {
-  {"sensorheight",   "sens_h",     "cm",       PT_F, &S.sensorHeightCm,    50, 1000},
-  {"groundclamp",    "gclamp",     "cm",       PT_F, &S.groundClampCm,      0, 200},
+  {"calfactor",      "cal_fac",    "x",        PT_F, &S.calFactor,        0.5, 2},
+  {"caloffset",      "cal_off",    "cm",       PT_F, &S.calOffsetCm,      -50, 50},
+  {"boxw",           "box_w",      "cm",       PT_F, &S.boxW,              10, 600},
+  {"boxd",           "box_d",      "cm",       PT_F, &S.boxD,              10, 600},
+  {"boxx",           "box_x",      "cm",       PT_F, &S.boxX,            -300, 300},
+  {"boxy",           "box_y",      "cm",       PT_F, &S.boxY,            -300, 300},
   {"mintrigger",     "min_trig",   "cm",       PT_F, &S.minTriggerCm,      20, 250},
-  {"minflux",        "min_flux",   "",         PT_I, &S.minFlux,            0, 65535},
   {"presencetime",   "pres_ms",    "ms",       PT_I, &S.presenceStableMs,   0, 10000},
   {"absentmargin",   "abs_cm",     "cm",       PT_F, &S.absentMarginCm,     1, 100},
   {"holdtime",       "hold_ms",    "ms",       PT_I, &S.holdAfterLeaveMs,   0, 30000},
@@ -158,15 +169,10 @@ uint32_t nowMs = 0, stateStart = 0, idleStart = 0, lastRenderMs = 0, playStart =
 State state = ST_IDLE;
 bool  animInit = true;
 
-// Sensor
-uint8_t  fb[9]; int fbi = 0;
+// Sensor (heights from the Rock64)
 uint32_t lastFrameMs = 0, lastPersonMs = 0, lastAbsentMs = 0, personStreakStart = 0, remStart = 0;
-uint16_t lastDist = 0, lastFlux = 0;
-float    lastHeight = 0, lastTempC = 0, groundCm = DEF_SENSOR_HEIGHT_CM;
-float    groundRefCm = DEF_SENSOR_HEIGHT_CM;   // center of the ground-learning clamp (set by calibration)
+float    lastRawCm = 0, lastHeight = 0;
 ReadClass lastClass = RC_UNKNOWN;
-uint16_t gBuf[G_N]; int gN = 0;
-uint16_t calBuf[G_N]; int calN = 0; bool calSave = false;
 
 // Measurement
 float dz[MAX_DZ]; int nDz = 0;
@@ -266,12 +272,14 @@ void setTarget(float heightCm) {
 //  Settings
 // =====================================================================
 void setDefaults() {
-  S.sensorHeightCm = DEF_SENSOR_HEIGHT_CM;   S.groundClampCm = DEF_GROUND_CLAMP_CM;
+  S.calFactor = DEF_CAL_FACTOR;              S.calOffsetCm = DEF_CAL_OFFSET_CM;
+  S.boxW = DEF_BOX_W_CM;                     S.boxD = DEF_BOX_D_CM;
+  S.boxX = DEF_BOX_X_CM;                     S.boxY = DEF_BOX_Y_CM;
   S.minTriggerCm = DEF_MIN_TRIGGER_CM;       S.absentMarginCm = DEF_ABSENT_MARGIN_CM;
   S.remeasureDeltaCm = DEF_REMEASURE_DELTA_CM;
   S.calLowCm = DEF_CAL_LOW_CM;               S.calHighCm = DEF_CAL_HIGH_CM;
   S.riseSpeed = DEF_RISE_SPEED;              S.drainSpeed = DEF_DRAIN_SPEED;
-  S.minFlux = DEF_MIN_FLUX;                  S.presenceStableMs = DEF_PRESENCE_STABLE_MS;
+  S.presenceStableMs = DEF_PRESENCE_STABLE_MS;
   S.holdAfterLeaveMs = DEF_HOLD_AFTER_LEAVE_MS; S.remeasureStableMs = DEF_REMEASURE_STABLE_MS;
   S.firstViewLed = DEF_FIRST_VIEW_LED;       S.lastViewLed = DEF_LAST_VIEW_LED;
   S.calLowLed = DEF_CAL_LOW_LED;             S.calHighLed = DEF_CAL_HIGH_LED;
@@ -298,26 +306,10 @@ void setState(State s) {
   state = s; stateStart = nowMs; animInit = true;
   out("STATE %s", STATE_NAMES[s]);
 }
-void enterIdle() { setState(ST_IDLE); idleStart = nowMs; personStreakStart = 0; gN = 0; }
+void enterIdle() { setState(ST_IDLE); idleStart = nowMs; personStreakStart = 0; }
 
-void setGround(float g) { groundCm = g; groundRefCm = g; }
-
-// Ground calibration: ~1 s of readings with nobody under the sensor.
-// save=false at boot (runtime only); save=true from "calibrate ground" (writes sensorheight).
-void startCalib(bool save) { calN = 0; calSave = save; setState(ST_CALIB); }
-void finishCalib() {
-  std::sort(calBuf, calBuf + calN);
-  float med = calBuf[calN / 2];
-  setGround(med);
-  out("%sground calibrated: %.1f cm (%d readings)", simTag(), med, calN);
-  if (calSave) {
-    if (med >= 50 && med <= 1000) {
-      S.sensorHeightCm = med; prefs.putFloat("sens_h", med);
-      out("saved sensorheight = %.1f cm", med);
-    } else out("not saved: %.1f cm is outside 50..1000", med);
-  }
-  enterIdle();
-}
+// Standing box -> Rock64 (USB serial only; Bluetooth doesn't need sensor traffic)
+void sendBox() { Serial.printf("#BOX %.1f %.1f %.1f %.1f\n", S.boxW, S.boxD, S.boxX, S.boxY); }
 
 void startDazzle() {
   nDz = 0; remStart = 0;
@@ -367,26 +359,12 @@ void finishMeasurement() {
 // =====================================================================
 //  Sensor input
 // =====================================================================
-void learnGround(uint16_t dist) {
-  gBuf[gN++] = dist;
-  if (gN < G_N) return;
-  gN = 0;
-  uint16_t tmp[G_N];
-  memcpy(tmp, gBuf, sizeof(tmp));
-  std::sort(tmp, tmp + G_N);
-  float med = tmp[G_N / 2];
-  float g = constrain(med, groundRefCm - S.groundClampCm, groundRefCm + S.groundClampCm);
-  if (fabsf(g - groundCm) >= 2.0f) out("%sground learned: %.1f cm (was %.1f)", simTag(), g, groundCm);
-  groundCm = g;
-}
-
-void onReading(uint16_t dist, uint16_t flux) {
-  lastFrameMs = nowMs; lastDist = dist; lastFlux = flux;
-  bool valid = dist > 0 && flux >= S.minFlux && flux != 65535;
+// One reading: valid=false means unknown (never counts as "gone").
+// h is the final height in cm (calibration already applied); 0 = nobody.
+void onReading(bool valid, float h) {
+  lastFrameMs = nowMs;
   if (!valid) { lastClass = RC_UNKNOWN; return; }
-  if (state == ST_CALIB) { if (calN < G_N) calBuf[calN++] = dist; return; }
 
-  float h = groundCm - (float)dist;
   lastHeight = h;
   ReadClass rc = (h >= S.minTriggerCm) ? RC_PERSON : (h <= S.absentMarginCm ? RC_ABSENT : RC_LOW);
   lastClass = rc;
@@ -402,26 +380,25 @@ void onReading(uint16_t dist, uint16_t flux) {
   } else {
     personStreakStart = 0;
     if (rc == RC_ABSENT) { lastAbsentMs = nowMs; remStart = 0; }
-    if (state == ST_IDLE) learnGround(dist);
   }
 }
 
-void pollLidar() {
-  while (Serial2.available()) {
-    uint8_t b = Serial2.read();
-    if (fbi == 0) { if (b == 0x59) fb[fbi++] = b; continue; }
-    if (fbi == 1) { if (b == 0x59) fb[fbi++] = b; else fbi = 0; continue; }
-    fb[fbi++] = b;
-    if (fbi < 9) continue;
-    fbi = 0;
-    uint8_t sum = 0;
-    for (int i = 0; i < 8; i++) sum += fb[i];
-    if (sum != fb[8]) continue;
-    uint16_t dist = fb[2] | (fb[3] << 8);
-    uint16_t flux = fb[4] | (fb[5] << 8);
-    uint16_t tr   = fb[6] | (fb[7] << 8);
-    lastTempC = tr / 8.0f - 256.0f;          // Benewake formula: deg C = Temp/8 - 256
-    if (!simOn) onReading(dist, flux);
+// A '#' line from the Rock64 (see the header comment for the protocol).
+void onSensorLine(const String& l) {
+  if (l.startsWith("#HELLO")) {                     // before "#H"
+    out("camera: Rock64 connected");
+    sendBox();
+  } else if (l.startsWith("#H")) {
+    float raw = l.substring(2).toFloat();
+    lastRawCm = raw;
+    if (simOn) return;                              // simulation feeds onReading itself
+    float h = raw > 0 ? raw * S.calFactor + S.calOffsetCm : 0;
+    onReading(true, h);
+  } else if (l.startsWith("#U")) {
+    if (simOn) return;
+    onReading(false, 0);
+  } else if (l.startsWith("#I")) {
+    out("camera: %s", l.substring(2).c_str());
   }
 }
 
@@ -434,11 +411,10 @@ void simTick() {
   while (nowMs - simLastMs >= 10) {                        // 100 Hz, like the sensor
     simLastMs += 10;
     if (simFault) continue;
-    if (simDropout && random(100) < 15) { onReading(0, 0); continue; }
-    float d = simPerson ? S.sensorHeightCm - simHeightCm : S.sensorHeightCm;
-    d += (random(-1000, 1001) / 1000.0f) * simNoiseCm;
-    if (d < 1) d = 1;
-    onReading((uint16_t)(d + 0.5f), 1500);
+    if (simDropout && random(100) < 15) { onReading(false, 0); continue; }
+    float h = simPerson ? simHeightCm : 0;
+    h += (random(-1000, 1001) / 1000.0f) * simNoiseCm;
+    onReading(true, h);
   }
 }
 
@@ -488,23 +464,12 @@ bool remeasureNow() {
 void updateState() {
   if (state == ST_PLAY || state == ST_LEDTEST) return;
 
-  if (state == ST_CALIB) {
-    uint32_t el = nowMs - stateStart;
-    if (calN >= G_N || (el >= 1000 && calN >= MIN_SAMPLES)) finishCalib();
-    else if (el >= 3000) {
-      out("%sground calibration failed (%d valid readings); using sensorheight %.1f", simTag(), calN, S.sensorHeightCm);
-      setGround(S.sensorHeightCm);
-      enterIdle();
-    }
-    return;
-  }
-
   if (state == ST_FAULT) {
     if (nowMs - lastFrameMs < 200) { out("sensor data resumed"); enterIdle(); }
     return;
   }
   if (nowMs - lastFrameMs > FAULT_MS) {
-    out("%sFAULT: no data from TFmini", simTag());
+    out("%sFAULT: no data from the camera (Rock64)", simTag());
     setState(ST_FAULT); idleStart = nowMs;
     return;
   }
@@ -793,7 +758,7 @@ void renderFrame(float dt) {
       renderPlay((float)(nowMs - playStart), dt, init);
       if (playType == PL_IDLE) master = S.idleLevelPct / 100.0f;
       break;
-    default: break;   // ST_CALIB: dark for ~1 s, then idle fades in
+    default: break;
   }
   output(master);
 }
@@ -809,8 +774,9 @@ int findName(const char* const* names, int n, const char* s) {
 void printStatus() {
   out("--- status ---");
   out("state=%s sim=%s demo=%s watch=%s", STATE_NAMES[state], simOn ? "on" : "off", demoOn ? "on" : "off", watchOn ? "on" : "off");
-  out("last: dist=%u cm flux=%u height=%.1f cm (%s) temp=%.1f C", lastDist, lastFlux, lastHeight, RC_NAMES[lastClass], lastTempC);
-  out("ground=%.1f cm (calibrated=%.1f, sensorheight=%.1f)", groundCm, groundRefCm, S.sensorHeightCm);
+  out("last: camera=%.1f cm  height=%.1f cm (%s)  calfactor=%.3f caloffset=%.1f",
+      lastRawCm, lastHeight, RC_NAMES[lastClass], S.calFactor, S.calOffsetCm);
+  out("box %.0f x %.0f cm at x %.0f y %.0f", S.boxW, S.boxD, S.boxX, S.boxY);
   out("last measured=%.1f cm  visible LEDs=%d (raw %d..%d) reversed=%s", measuredCm, nVis, visLo, visHi, reversed ? "yes" : "no");
   out("top visible LED = %.1f cm", visToHeight(nVis - 1));
   out("visitors: season=%lu tonight=%lu  uptime=%lus", (unsigned long)seasonCount, (unsigned long)tonightCount, (unsigned long)(nowMs / 1000));
@@ -821,7 +787,7 @@ void printHelp() {
   out("help | status | get | count | play list | watch on|off");
   out("unlock <pw>                  (Bluetooth only; USB is always unlocked)");
   out("set <name> <value> | defaults | count reset | reboot");
-  out("calibrate ground             nobody under the sensor; saves sensorheight");
+  out("calibrate camera             records the empty scene (starts in 5 s; step out of view)");
   out("led <n> | led off            light one raw LED for calibration");
   out("sim on|off | sim height <cm> | sim leave | sim noise <cm>");
   out("sim dropout on|off | sim fault | demo on|off");
@@ -882,7 +848,7 @@ void handleCmd(String line, Src src) {
       }
       if (p.type == PT_F) prefs.putFloat(p.key, *(float*)p.ptr); else prefs.putInt(p.key, *(int32_t*)p.ptr);
       recomputeMapping();
-      if (!strcmp(p.name, "sensorheight")) setGround(S.sensorHeightCm);
+      if (!strncmp(p.name, "box", 3)) sendBox();
       printParam(p);
       return;
     }
@@ -891,7 +857,7 @@ void handleCmd(String line, Src src) {
   }
   if (!strcmp(c, "defaults")) {
     prefs.clear(); prefs.putUInt("visits", seasonCount);
-    setDefaults(); recomputeMapping(); setGround(S.sensorHeightCm);
+    setDefaults(); recomputeMapping(); sendBox();
     out("defaults restored");
     return;
   }
@@ -901,9 +867,9 @@ void handleCmd(String line, Src src) {
   if (!strcmp(c, "reboot")) { out("rebooting"); delay(100); ESP.restart(); return; }
 
   if (!strcmp(c, "calibrate")) {
-    if (strcmp(a1, "ground")) { out("usage: calibrate ground"); return; }
-    out("%scalibrating ground: keep clear of the sensor for 1 s", simTag());
-    startCalib(true);
+    if (strcmp(a1, "camera")) { out("usage: calibrate camera"); return; }
+    out("calibrate camera: sent to the Rock64; step out of view");
+    Serial.println("#CAL");
     return;
   }
 
@@ -917,17 +883,17 @@ void handleCmd(String line, Src src) {
   }
 
   if (!strcmp(c, "sim")) {
-    if (!strcmp(a1, "on"))  { simOn = true; simLastMs = nowMs; setGround(S.sensorHeightCm); out("[SIM] simulation on (sensor ignored)"); return; }
+    if (!strcmp(a1, "on"))  { simOn = true; simLastMs = nowMs; out("[SIM] simulation on (sensor ignored)"); return; }
     if (!strcmp(a1, "off")) {
       simOn = false; demoOn = false; simPerson = false; simFault = false;
       out("simulation off (real sensor)");
-      startCalib(false);                       // re-find the real ground
+      enterIdle();
       return;
     }
     if (!strcmp(a1, "height")) {
       float h = atof(a2);
       if (h <= 0) { out("usage: sim height <cm>"); return; }
-      if (!simOn) { simOn = true; simLastMs = nowMs; setGround(S.sensorHeightCm); out("[SIM] simulation on"); }
+      if (!simOn) { simOn = true; simLastMs = nowMs; out("[SIM] simulation on"); }
       simHeightCm = h; simPerson = true; simFault = false;
       out("[SIM] person %.1f cm steps in", h); return;
     }
@@ -941,7 +907,7 @@ void handleCmd(String line, Src src) {
 
   if (!strcmp(c, "demo")) {
     if (!strcmp(a1, "on")) {
-      demoOn = true; simOn = true; simLastMs = nowMs; setGround(S.sensorHeightCm);
+      demoOn = true; simOn = true; simLastMs = nowMs;
       simPerson = false; simFault = false; demoPhase = 0; demoNext = nowMs + 2000;
       out("[SIM] demo on");
     } else { demoOn = false; simPerson = false; out("[SIM] demo off (sim still on; 'sim off' to stop)"); }
@@ -982,7 +948,11 @@ void handleCmd(String line, Src src) {
 void pollCmds() {
   while (Serial.available()) {
     char ch = Serial.read();
-    if (ch == '\n' || ch == '\r') { if (usbLine.length()) handleCmd(usbLine, SRC_USB); usbLine = ""; }
+    if (ch == '\n' || ch == '\r') {
+      if (usbLine.startsWith("#")) onSensorLine(usbLine);        // Rock64 traffic
+      else if (usbLine.length()) handleCmd(usbLine, SRC_USB);
+      usbLine = "";
+    }
     else if (usbLine.length() < 120) usbLine += ch;
   }
   while (SerialBT.available()) {
@@ -999,7 +969,7 @@ void pollCmds() {
 void watchTick() {
   if (!watchOn || nowMs - lastWatchMs < 200) return;
   lastWatchMs = nowMs;
-  out("%sd=%u flux=%u h=%.1f %s ground=%.1f", simTag(), lastDist, lastFlux, lastHeight, RC_NAMES[lastClass], groundCm);
+  out("%scamera=%.1f h=%.1f %s", simTag(), lastRawCm, lastHeight, RC_NAMES[lastClass]);
 }
 
 // =====================================================================
@@ -1020,7 +990,6 @@ void setupWatchdog() {
 
 void setup() {
   Serial.begin(115200);
-  Serial2.begin(115200, SERIAL_8N1, LIDAR_RX, LIDAR_TX);
 
   for (int i = 0; i < 256; i++) gammaT[i] = (uint8_t)(powf(i / 255.0f, 2.2f) * 255.0f + 0.5f);
 
@@ -1030,7 +999,6 @@ void setup() {
   seasonCount = prefs.getUInt("visits", 0);
   if (!validMapping()) { setDefaults(); Serial.println("saved calibration invalid; using defaults"); }
   recomputeMapping();
-  setGround(S.sensorHeightCm);              // fallback until boot calibration finishes
 
   strip.Begin();
   strip.Show();
@@ -1041,14 +1009,14 @@ void setup() {
   nowMs = millis();
   lastFrameMs = nowMs; simLastMs = nowMs; lastRenderMs = nowMs;
   out("North Pole ready. season visitors=%lu. Type 'help'.%s", (unsigned long)seasonCount, simOn ? " [SIM at boot]" : "");
-  startCalib(false);                        // nobody is under the sensor at power-on
+  sendBox();                                // in case the Rock64 is already running
+  enterIdle();
 }
 
 void loop() {
   nowMs = millis();
   esp_task_wdt_reset();
 
-  pollLidar();
   simTick();
   demoTick();
   pollCmds();

@@ -1,14 +1,13 @@
 # North Pole Height Display — Software Spec
 
-ESP32-WROOM-32 (board: `ESP32 Dev Module`), TFmini Plus, 146-pixel 5V strip, Bluetooth Classic serial.
+ESP32-WROOM-32 (board: `ESP32 Dev Module`), Intel RealSense D435i on a Rock64 (`rock64/height.py`), 146-pixel 5V strip, Bluetooth Classic serial.
 
 ## Hardware assignments
 
 | Item | Value |
 |---|---|
-| TFmini green (sensor TX) | `IO16` (Serial2 RX) |
-| TFmini white (sensor RX) | `IO17` (Serial2 TX) |
-| TFmini baud | 115200 (sensor default) |
+| Camera | RealSense D435i on the Rock64's USB 2 port (USB 3 failed at boot on this Rock64) |
+| Rock64 ↔ ESP32 | USB serial, 115200, VBUS disconnected |
 | Pixel data | `IO18` → level shifter → 300–500 Ω → DIN |
 | Pixel count | 146 |
 | Power | 12A 5V supply, all grounds common; program with VBUS disconnected |
@@ -19,10 +18,11 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 
 | Setting | Default | Notes |
 |---|---|---|
-| `sensorheight` | 230 | Lens to ground. Fallback if boot calibration fails; `calibrate ground` sets it. |
-| `groundclamp` | 30 | Ongoing ground learning may drift at most this far from the calibrated ground. |
+| `calfactor` | 1.0 | Camera height × this … |
+| `caloffset` | 0 | … + this (cm) = displayed height. |
+| `boxw`, `boxd` | 100, 100 | Standing box size in cm on the floor (image x, y). Sent to the Rock64. |
+| `boxx`, `boxy` | 0, 0 | Box center in cm from the point directly under the camera. |
 | `mintrigger` | 70 | Shortest height that starts the show. Set with toddlers in mind. |
-| `minflux` | 100 | Below this (or dist = 0, or flux 65535) a reading is "unknown", not "gone". |
 | `presencetime` | 500 | Height must hold this long to trigger. |
 | `absentmargin` | 15 | Reading within this of ground = nobody there. |
 | `holdtime` | 1000 | Show continues this long after the person steps away. |
@@ -53,8 +53,7 @@ Compile-time only: `SIM_AT_BOOT` (false), `BT_NAME` (`NorthPoleLidar`), `BT_PASS
 
 ## States
 
-- **CALIBRATE** — at boot (nobody is under the sensor at power-on): strip dark ~1 s, median of readings = ground. Not saved to flash. Fewer than 20 valid readings in 3 s → fall back to `sensorheight`. Also entered by `calibrate ground` (which saves) and `sim off`.
-- **IDLE** — attract animation at `idlelevel`. Ground keeps learning from readings with nobody present (median of ~1 s batches, clamped to ±`groundclamp` of the calibrated ground). Trigger when height ≥ `mintrigger` holds for `presencetime` → DAZZLE.
+- **IDLE** — attract animation at `idlelevel`. Trigger when height ≥ `mintrigger` holds for `presencetime` → DAZZLE.
 - **DAZZLE** — random dazzle animation for `dazzletime`. Collect every valid sample; height = **median**. Person leaves → dissolve outro → IDLE.
 - **RISE** — column grows from the bottom to the measured height with ease-out.
 - **SHOW** — random show mode with a gold star at the height (off-the-charts variant if above the top LED); loops until the person leaves.
@@ -63,7 +62,7 @@ Compile-time only: `SIM_AT_BOOT` (false), `BT_NAME` (`NorthPoleLidar`), `BT_PASS
 - **OUTRO** — random outro animation → IDLE (idle fades in, never a cut). A new person arriving during the outro starts a new dazzle.
 - **FAULT** — no frames from the sensor for ~1 s: idle animation only, report the fault, return to IDLE when frames resume.
 
-Height = ground distance − measured distance. Gone = no person reading for `holdtime` and a ground-level reading seen since (or 5 s with no person reading at all). Unknown readings (low flux, dist 0) never count as gone.
+Height comes from the Rock64 (height above the recorded empty scene) × `calfactor` + `caloffset`. Gone = no person reading for `holdtime` and a nobody reading seen since (or 5 s with no person reading at all). Unknown readings (head cut off at the edge of the view, someone reaching into the box, calibrating) never count as gone.
 
 ## Animations
 
@@ -116,16 +115,16 @@ Both channels are identical: all status output goes to both, and every command i
 | `status` | no | Current state, last reading, ground distance, mapping, counts. |
 | `get` | no | List all settings. |
 | `count` | no | Season total and tonight's count. |
-| `watch on` / `watch off` | no | Stream live readings 5×/s (distance, flux, height, class, ground). |
+| `watch on` / `watch off` | no | Stream live readings 5×/s (camera height, displayed height, class). |
 | `play list` | no | List animation names by type. |
 | `unlock <pw>` | — | Unlock (Bluetooth only). |
 | `set <name> <value>` | yes | Apply immediately and save to flash. |
 | `defaults` | yes | Restore code defaults (keeps the visitor count). |
-| `calibrate ground` | yes | Nobody under the sensor: ~1 s of readings, median saved as `sensorheight`. |
+| `calibrate camera` | yes | The Rock64 waits 5 s, then records the empty scene for 3 s (saved on the Rock64). |
 | `led <n>` / `led off` | yes | Light one raw LED (for calibration). Suspends the normal show until `led off`. |
 | `count reset` | yes | Zero the counts. |
 | `reboot` | yes | Restart. |
-| `sim on` / `sim off` | yes | Ignore the TFmini; use simulated readings. Never saved to flash. `sim off` recalibrates against the real sensor. |
+| `sim on` / `sim off` | yes | Ignore the camera; use simulated readings. Never saved to flash. |
 | `sim height <cm>` | yes | Simulated person of that height steps in (turns sim on). Sent again with a different height during SHOW = sibling swap. |
 | `sim leave` | yes | Simulated person steps away. |
 | `sim noise <cm>` | yes | Random jitter on simulated readings. `0` = off. |
