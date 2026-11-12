@@ -2,3 +2,5 @@ build/
 *.bin
 *.elf
 .DS_Store
+rock64/background.npy
+__pycache__/
