@@ -26,7 +26,8 @@ How it works:
              reported as unknown, not as a (too low) height.
 
 Serial protocol with the ESP32 (115200, lines; '#' lines are sensor traffic):
-  to ESP32:   "#H <cm>" height (0 = nobody), "#U" unknown, "#I <text>" info, "#HELLO" on connect
+  to ESP32:   "#H <cm>" height (0 = nobody), "#U" unknown, "#I <text>" info, "#HELLO" on connect,
+              "#CALOK" empty scene recorded (the ESP32 shows a green wipe)
   from ESP32: "#BOX <w> <d> <x> <y>" standing box in cm,
               "#CFG <headpatch cm> <minpixels> <topk>" measuring settings, "#CAL" record the empty scene
   Other lines from the ESP32 are its status output; they are printed here with "esp32|".
@@ -399,6 +400,7 @@ def run(use_box, use_serial):
                     cal_frames = None
                     log("calibrated: " + summary)
                     link.send("#I calibrated: " + summary)
+                    link.send("#CALOK")
                     told_no_bg = False
                 continue
             if cal_at is not None:

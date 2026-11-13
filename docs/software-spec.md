@@ -148,6 +148,7 @@ USB serial, 115200, one line per message. Lines starting with `#` are sensor tra
 | Rock64 → ESP32 | `#U` | Unknown: head at the edge of the view, someone outside the box reaching in, or calibrating. Never counts as gone. |
 | Rock64 → ESP32 | `#I <text>` | Information, shown as `camera: <text>`. |
 | Rock64 → ESP32 | `#HELLO` | Rock64 (re)connected; the ESP32 answers with `#BOX` and `#CFG`. |
+| Rock64 → ESP32 | `#CALOK` | Empty scene recorded (at start or after `calibrate camera`): green fills the pole bottom to top, holds, fades (~1.6 s). |
 | ESP32 → Rock64 | `#BOX <w> <d> <x> <y>` | Standing box (cm). Sent at ESP32 boot, on `#HELLO`, and when a box setting changes. |
 | ESP32 → Rock64 | `#CFG <headpatch> <minpixels> <topk>` | Measuring settings, sent with `#BOX`. |
 | ESP32 → Rock64 | `#CAL` | `calibrate camera`. |

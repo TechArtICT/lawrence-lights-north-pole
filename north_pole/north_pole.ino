@@ -10,6 +10,7 @@
                                  "#U"      unknown (e.g. head cut off at the frame edge)
                                  "#I <text>" info, printed as-is
                                  "#HELLO"  Rock64 (re)started: ESP32 resends the box
+                                 "#CALOK"  empty scene recorded: green wipe up the pole
                ESP32 -> Rock64:  "#BOX <w> <d> <x> <y>" standing box in cm
                                  "#CFG <headpatch cm> <minpixels> <topk>" measuring settings
                                  "#CAL"    record the empty scene
@@ -196,6 +197,12 @@ bool  offCharts = false;
 float riseDurMs = 1000;
 int   dazzleIdx = 0, showIdx = 0, outroIdx = 0;
 int   forcedDazzle = -1, forcedShow = -1, forcedOutro = -1;
+
+// "Calibrated" signal (green wipe up the pole), started by "#CALOK" from the Rock64
+uint32_t calOkAt = 0; bool calOkShow = false;
+#define CALOK_WIPE_MS   600
+#define CALOK_HOLD_MS   400
+#define CALOK_FADE_MS   600
 
 // Outro
 bool  outroHasStar = true, outroDone = false;
@@ -467,6 +474,9 @@ void onSensorLine(const String& l) {
     onReading(false, 0);
   } else if (l.startsWith("#I")) {
     out("camera: %s", l.substring(2).c_str());
+  } else if (l.startsWith("#CALOK")) {
+    out("camera: ready (empty scene recorded)");
+    calOkAt = nowMs; calOkShow = true;
   }
 }
 
@@ -835,6 +845,23 @@ void renderFrame(float dt) {
       if (playType == PL_IDLE) master = S.idleLevelPct / 100.0f;
       break;
     default: break;
+  }
+  // "calibrated": green fills the pole bottom to top, holds, fades back to whatever is showing
+  if (calOkShow) {
+    float t = (float)(nowMs - calOkAt);
+    if (t >= CALOK_WIPE_MS + CALOK_HOLD_MS + CALOK_FADE_MS) calOkShow = false;
+    else {
+      float front = clamp01(t / CALOK_WIPE_MS) * nVis;
+      float fade = 1.0f - clamp01((t - CALOK_WIPE_MS - CALOK_HOLD_MS) / CALOK_FADE_MS);
+      for (int p = 0; p < nVis; p++) {
+        float a = (p < front ? 1.0f : 0.0f) * fade;
+        Col c = buf[p];                          // fold master in, so the green is full brightness
+        buf[p] = {c.r * master * (1 - a) + C_GREEN.r * a,
+                  c.g * master * (1 - a) + C_GREEN.g * a,
+                  c.b * master * (1 - a) + C_GREEN.b * a};
+      }
+      master = 1.0f;
+    }
   }
   output(master);
 }
