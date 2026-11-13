@@ -35,7 +35,6 @@ import glob
 import os
 import sys
 import time
-import warnings
 
 import numpy as np
 import pyrealsense2 as rs
@@ -118,14 +117,17 @@ def intrinsics_for(shape, raw):
 
 
 def background_from(frames):
+    # Per-pixel median of the valid (non-zero) readings. Sorting with the zeros pushed to
+    # the end is ~5x faster than np.nanmedian, which matters on the Rock64: while this runs
+    # nothing goes to the ESP32, and after 1 s it reports FAULT.
     stack = np.stack(frames)
-    stack[stack == 0] = np.nan
-    valid_frac = np.mean(~np.isnan(stack), axis=0)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")          # all-empty pixels give a harmless warning
-        bg = np.nanmedian(stack, axis=0)
-    bg[(valid_frac < 0.5) | np.isnan(bg)] = 0
-    bg = bg.astype(np.float32)
+    valid = stack > 0
+    cnt = valid.sum(axis=0)
+    srt = np.where(valid, stack, np.inf)
+    srt.sort(axis=0)
+    lo = np.take_along_axis(srt, np.clip((cnt - 1) // 2, 0, None)[None], 0)[0]
+    hi = np.take_along_axis(srt, np.clip(cnt // 2, 0, None)[None], 0)[0]
+    bg = np.where(cnt >= 0.5 * len(frames), 0.5 * (lo + hi), 0).astype(np.float32)
     np.save(BG_FILE, bg)
     h, w = bg.shape
     return bg, (f"{len(frames)} frames, {w}x{h}, center {bg[h // 2, w // 2]:.1f} cm, "
@@ -382,7 +384,9 @@ def run(use_box, use_serial):
                     cal_frames.append(d)
                 link.send("#U")
                 if now >= cal_end:
+                    link.send("#U")                       # fresh "unknown" before the slow part
                     m.bg, summary = background_from(cal_frames)
+                    link.send("#U")
                     m.rays = None
                     cal_frames = None
                     log("calibrated: " + summary)
