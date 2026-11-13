@@ -124,7 +124,7 @@ Both channels are identical: all status output goes to both, and every command i
 | `unlock <pw>` | — | Unlock (Bluetooth only). |
 | `set <name> <value>` | yes | Apply immediately and save to flash. |
 | `defaults` | yes | Restore code defaults (keeps the visitor count). |
-| `calibrate camera` | yes | The Rock64 waits 5 s, then records the empty scene for 3 s (saved on the Rock64). |
+| `calibrate camera` | yes | The Rock64 waits 5 s, then records the empty scene for 3 s. The Rock64 also does this by itself 2 s after every start (anyone in view then becomes part of the floor until the next start). |
 | `led <n>` / `led off` | yes | Light one raw LED (for calibration). Suspends the normal show until `led off`. |
 | `count reset` | yes | Zero the counts. |
 | `reboot` | yes | Restart. |

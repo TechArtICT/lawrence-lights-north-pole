@@ -9,6 +9,8 @@
 How it works:
   calibrate: ~3 s of depth frames, per-pixel median = empty scene (floor, pole, sign).
              Saved to background.npy next to this script.
+             Done automatically at every start (anyone in view then becomes part of the floor
+             until the next start or 'calibrate camera'), and on request from the ESP32.
   run:       a pixel is "person" if it is more than FG_MARGIN_CM closer than the empty scene.
              Touching person pixels form blobs (one per person, unless people touch); a depth
              step of more than JUMP_CM between neighbors separates blobs (one person in front
@@ -59,6 +61,7 @@ SETTLE_FRAMES = 30                  # let auto-exposure settle before calibratin
 CAL_SECONDS = 3.0
 CAL_EVERY = 3                       # use every 3rd frame while calibrating (~30 frames)
 CAL_DELAY_S = 5.0                   # "calibrate camera" from the ESP32 waits this long first
+START_CAL_DELAY_S = 2.0             # at every start: record the empty scene after this long
 
 # ---- serial link ----
 SERIAL_GLOB = "/dev/serial/by-id/*CP210*"
@@ -319,17 +322,14 @@ def ft_in(cm):
 def run(use_box, use_serial):
     m = Measurer(use_box)
     link = Link(use_serial)
-    if m.bg is None:
-        log("no background yet: run calibrate (or 'calibrate camera' from the ESP32)")
-        if not use_serial:
-            sys.exit(1)
-    elif use_box:
+    if use_box:
         m.set_box(*m.box)
     else:
         log("no box: whole view")
 
     pipe, dec, scale = start_camera()
-    cal_at = None              # time calibration starts (pending)
+    cal_at = time.time() + START_CAL_DELAY_S   # fresh empty scene at every start
+    log(f"recording the empty scene in {START_CAL_DELAY_S:.0f} s: keep the area clear")
     cal_frames, cal_n, cal_end = None, 0, 0.0
     last_print = 0.0
     told_no_bg = False
