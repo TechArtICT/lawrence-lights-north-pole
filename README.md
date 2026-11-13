@@ -31,7 +31,7 @@ Add a 500–1000 µF capacitor across the strip's power input. Program with USB 
 
 Or on the Rock64: `bash rock64/setup-arduino.sh` once, then `bash rock64/flash.sh` to compile and flash over the USB link.
 
-Rock64 (Ubuntu 20.04, Python 3.9 venv at `~/rs`): `~/rs/bin/pip install pyrealsense2 numpy scipy esptool`, then `~/rs/bin/python rock64/height.py calibrate` with nobody in view, and `~/rs/bin/python rock64/height.py` to run.
+Rock64 (Ubuntu 20.04, Python 3.9 venv at `~/rs`): `~/rs/bin/pip install pyrealsense2 numpy scipy esptool`, then `~/rs/bin/python rock64/height.py calibrate` with nobody in view, and `~/rs/bin/python rock64/height.py` to run. For the field: `bash rock64/install-service.sh` once, so it starts at boot; watch it with `journalctl -u northpole-height -f`.
 
 ## Using it
 

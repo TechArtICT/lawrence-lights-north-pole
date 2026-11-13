@@ -4,7 +4,8 @@
 #   bash rock64/flash.sh            compile + flash
 #   bash rock64/flash.sh compile    compile only
 #
-# Flashing needs the serial port, so height.py is stopped first; start it again afterwards.
+# Flashing needs the serial port, so height.py is stopped first. If it runs as the
+# northpole-height service it is restarted afterwards; if you started it by hand, start it again.
 set -euo pipefail
 
 export PATH="$HOME/bin:$PATH"
@@ -22,6 +23,14 @@ arduino-cli compile --fqbn "$FQBN" --output-dir "$OUT" "$SKETCH"
 PORT="$(ls /dev/serial/by-id/*CP210* 2>/dev/null | head -n1 || true)"
 [ -n "$PORT" ] || PORT=/dev/ttyUSB0
 
+SERVICE=northpole-height
+RESTART_SERVICE=0
+if systemctl is-active --quiet "$SERVICE"; then
+  echo "== stopping the $SERVICE service (it holds the serial port)"
+  sudo systemctl stop "$SERVICE"
+  RESTART_SERVICE=1
+  trap 'sudo systemctl start "$SERVICE"; echo "== $SERVICE restarted"' EXIT   # even if flashing fails
+fi
 if pgrep -f "height.py" >/dev/null; then
   echo "== stopping height.py (it holds the serial port)"
   pkill -f "height.py" || true
@@ -37,4 +46,8 @@ echo "== flashing $PORT"
   0xe000  "$CORE_DIR/tools/partitions/boot_app0.bin" \
   0x10000 "$OUT/north_pole.ino.bin"
 
-echo "== done. Start height.py again:  ~/rs/bin/python $HERE/height.py"
+if [ "$RESTART_SERVICE" = 1 ]; then
+  echo "== done"
+else
+  echo "== done. Start height.py again:  ~/rs/bin/python $HERE/height.py"
+fi

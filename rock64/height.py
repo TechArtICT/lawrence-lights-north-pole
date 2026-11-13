@@ -14,7 +14,7 @@ How it works:
   run:       a pixel is "person" if it is more than FG_MARGIN_CM closer than the empty scene.
              Touching person pixels form blobs (one per person, unless people touch); a depth
              step of more than JUMP_CM between neighbors separates blobs (one person in front
-             of another). Blobs smaller than MIN_PIXELS are noise. For each blob the TOP_K highest pixels locate the
+             of another). Blobs smaller than MIN_PIXELS are noise. For each blob the TOP_K highest pixels (their densest group) locate the
              top of the head; height = median of the blob's pixels within HEAD_PATCH_CM of that
              spot (height above the empty scene).
              A blob counts if its top of head is inside the standing box (a rectangle on the
@@ -48,6 +48,7 @@ BOX_Y_CM = 0.0         # box center, cm from the point directly under the camera
 FG_MARGIN_CM = 10.0    # must be this far above the empty scene to count as person
 MIN_PIXELS = 150       # * blobs smaller than this are noise, not people
 TOP_K = 40             # * the highest this-many pixels of a blob locate the top of the head
+TOP_CLUSTER_CM = 10.0  # ... using only the densest group of them within this radius
 HEAD_PATCH_CM = 3.0    # * height = median of the blob's pixels within this radius of that spot
 EDGE_PX = 6            # head top this close to the image edge = maybe cut off -> unknown
 JUMP_CM = 25.0         # depth step between neighboring pixels that separates two blobs
@@ -284,6 +285,13 @@ class Measurer:
             n = len(ys)
             k = min(self.top_k, n)
             top = np.argpartition(vals, n - k)[n - k:]
+            # The highest pixels can sit in two places (a crawler's hips and shoulders). Use
+            # the densest group of them, so their middle can't land on the lower part between.
+            tu, tv = xs[top].astype(np.float32), ys[top].astype(np.float32)
+            r_cl = TOP_CLUSTER_CM * fx / float(np.median(dd[top]))
+            near = (tu[:, None] - tu[None, :]) ** 2 + (tv[:, None] - tv[None, :]) ** 2 <= r_cl ** 2
+            seed = int(np.argmax(near.sum(axis=1) + vals[top] * 1e-6))   # most neighbors (tie: highest)
+            top = top[near[seed]]
             u0, v0 = float(np.median(xs[top])), float(np.median(ys[top]))
             head_d = float(np.median(dd[top]))
             r_px = max(1.5, self.head_patch_cm * fx / head_d)
