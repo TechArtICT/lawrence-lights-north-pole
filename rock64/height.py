@@ -25,7 +25,8 @@ How it works:
 
 Serial protocol with the ESP32 (115200, lines; '#' lines are sensor traffic):
   to ESP32:   "#H <cm>" height (0 = nobody), "#U" unknown, "#I <text>" info, "#HELLO" on connect
-  from ESP32: "#BOX <w> <d> <x> <y>" standing box in cm, "#CAL" record the empty scene
+  from ESP32: "#BOX <w> <d> <x> <y>" standing box in cm,
+              "#CFG <headpatch cm> <minpixels> <topk>" measuring settings, "#CAL" record the empty scene
   Other lines from the ESP32 are its status output; they are printed here with "esp32|".
 """
 import glob
@@ -38,15 +39,15 @@ import numpy as np
 import pyrealsense2 as rs
 from scipy import ndimage
 
-# ---- defaults (the ESP32 sends the box when linked) ----
+# ---- defaults (when linked, the ESP32 sends the box and the three marked * below) ----
 BOX_W_CM = 50.0        # standing box size along the image x axis
 BOX_D_CM = 50.0        # standing box size along the image y axis
 BOX_X_CM = 0.0         # box center, cm from the point directly under the camera (image x)
 BOX_Y_CM = 0.0         # box center, cm from the point directly under the camera (image y)
 FG_MARGIN_CM = 10.0    # must be this far above the empty scene to count as person
-MIN_PIXELS = 150       # fewer person pixels than this = nobody
-TOP_K = 40             # the highest this-many person pixels locate the top of the head
-HEAD_PATCH_CM = 3.0    # height = median of person pixels within this radius of that spot
+MIN_PIXELS = 150       # * blobs smaller than this are noise, not people
+TOP_K = 40             # * the highest this-many pixels of a blob locate the top of the head
+HEAD_PATCH_CM = 3.0    # * height = median of the blob's pixels within this radius of that spot
 EDGE_PX = 6            # head top this close to the image edge = maybe cut off -> unknown
 JUMP_CM = 25.0         # depth step between neighboring pixels that separates two blobs
 PRINT_EVERY_S = 0.2
@@ -220,8 +221,13 @@ class Measurer:
     def __init__(self, use_box):
         self.use_box = use_box
         self.box = [BOX_W_CM, BOX_D_CM, BOX_X_CM, BOX_Y_CM]
+        self.head_patch_cm, self.min_pixels, self.top_k = HEAD_PATCH_CM, MIN_PIXELS, TOP_K
         self.bg = np.load(BG_FILE) if os.path.exists(BG_FILE) else None
         self.rays = None          # per-column / per-row lateral cm per cm of depth
+
+    def set_cfg(self, head_patch_cm, min_pixels, top_k):
+        self.head_patch_cm, self.min_pixels, self.top_k = head_patch_cm, int(min_pixels), int(top_k)
+        log(f"headpatch {self.head_patch_cm:.1f} cm, minpixels {self.min_pixels}, topk {self.top_k}")
 
     def set_box(self, w, d, x, y):
         self.box = [w, d, x, y]
@@ -264,18 +270,18 @@ class Measurer:
         # the whole blob; the blob counts if that top is inside the box.
         best = None            # (height, hx, hy, n, u0, v0)
         reaching_in = False    # a blob whose head is outside the box but whose body is inside
-        for lab in np.flatnonzero(sizes >= MIN_PIXELS):
+        for lab in np.flatnonzero(sizes >= self.min_pixels):
             if lab == 0:
                 continue
             ys, xs = np.nonzero(labels == lab)
             dd = d[ys, xs]
             vals = above[ys, xs]
             n = len(ys)
-            k = min(TOP_K, n)
+            k = min(self.top_k, n)
             top = np.argpartition(vals, n - k)[n - k:]
             u0, v0 = float(np.median(xs[top])), float(np.median(ys[top]))
             head_d = float(np.median(dd[top]))
-            r_px = max(1.5, HEAD_PATCH_CM * fx / head_d)
+            r_px = max(1.5, self.head_patch_cm * fx / head_d)
             patch = (xs - u0) ** 2 + (ys - v0) ** 2 <= r_px ** 2
             height = float(np.median(vals[patch])) if patch.sum() >= 5 else float(np.median(vals[top]))
             hx = (u0 - ppx) / fx * head_d
@@ -286,7 +292,7 @@ class Measurer:
                     px = rx[xs] * dd                    # where each point really is, laterally
                     py = ry[ys] * dd
                     inside = (np.abs(px - bx) <= bw / 2) & (np.abs(py - by) <= bd / 2)
-                    if int(inside.sum()) >= MIN_PIXELS:
+                    if int(inside.sum()) >= self.min_pixels:
                         reaching_in = True
                     continue
             if best is None or height > best[0]:
@@ -338,6 +344,12 @@ def run(use_box, use_serial):
                         m.set_box(w, dpt, x, y)
                     except ValueError:
                         log(f"bad box line: {line!r}")
+                elif line.startswith("#CFG"):
+                    try:
+                        hp, mp, tk = (float(v) for v in line.split()[1:4])
+                        m.set_cfg(hp, mp, tk)
+                    except ValueError:
+                        log(f"bad cfg line: {line!r}")
                 elif line.startswith("#CAL"):
                     cal_at = time.time() + CAL_DELAY_S
                     log(f"calibrate requested: starting in {CAL_DELAY_S:.0f} s")

@@ -11,6 +11,7 @@
                                  "#I <text>" info, printed as-is
                                  "#HELLO"  Rock64 (re)started: ESP32 resends the box
                ESP32 -> Rock64:  "#BOX <w> <d> <x> <y>" standing box in cm
+                                 "#CFG <headpatch cm> <minpixels> <topk>" measuring settings
                                  "#CAL"    record the empty scene
 
   Wiring:    USB (VBUS disconnected) -> Rock64
@@ -41,6 +42,9 @@
 #define DEF_BOX_D_CM               50.0f
 #define DEF_BOX_X_CM                0.0f  // box center offset from the point under the camera
 #define DEF_BOX_Y_CM                0.0f
+#define DEF_HEAD_PATCH_CM           3.0f  // Rock64: height = median within this radius of the head top
+#define DEF_MIN_PIXELS            150     // Rock64: smaller blobs are noise, not people
+#define DEF_TOP_K                  40     // Rock64: this many highest pixels locate the head top
 #define DEF_MIN_TRIGGER_CM         70.0f  // shortest height that starts the show
 #define DEF_PRESENCE_STABLE_MS    500     // person must be there this long to trigger
 #define DEF_ABSENT_MARGIN_CM       15.0f  // height <= this = nobody there
@@ -112,7 +116,8 @@ static const char* OUTRO_NAMES[]  = {"drain","dissolve"};
 static const int N_DAZZLE = 6, N_SHOW = 3, N_OUTRO = 2;
 
 struct Settings {
-  float   calFactor, calOffsetCm, boxW, boxD, boxX, boxY;
+  float   calFactor, calOffsetCm, boxW, boxD, boxX, boxY, headPatchCm;
+  int32_t minPixels, topK;
   float   minTriggerCm, absentMarginCm, remeasureDeltaCm;
   float   calLowCm, calHighCm, riseSpeed, drainSpeed;
   int32_t presenceStableMs, holdAfterLeaveMs, remeasureStableMs;
@@ -132,6 +137,9 @@ Param params[] = {
   {"boxd",           "box_d",      "cm",       PT_F, &S.boxD,              10, 600},
   {"boxx",           "box_x",      "cm",       PT_F, &S.boxX,            -300, 300},
   {"boxy",           "box_y",      "cm",       PT_F, &S.boxY,            -300, 300},
+  {"headpatch",      "head_patch", "cm",       PT_F, &S.headPatchCm,      0.5, 20},
+  {"minpixels",      "min_pix",    "pixels",   PT_I, &S.minPixels,         10, 5000},
+  {"topk",           "top_k",      "pixels",   PT_I, &S.topK,               1, 500},
   {"mintrigger",     "min_trig",   "cm",       PT_F, &S.minTriggerCm,      20, 250},
   {"presencetime",   "pres_ms",    "ms",       PT_I, &S.presenceStableMs,   0, 10000},
   {"absentmargin",   "abs_cm",     "cm",       PT_F, &S.absentMarginCm,     1, 100},
@@ -281,6 +289,8 @@ void setDefaults() {
   S.calFactor = DEF_CAL_FACTOR;              S.calOffsetCm = DEF_CAL_OFFSET_CM;
   S.boxW = DEF_BOX_W_CM;                     S.boxD = DEF_BOX_D_CM;
   S.boxX = DEF_BOX_X_CM;                     S.boxY = DEF_BOX_Y_CM;
+  S.headPatchCm = DEF_HEAD_PATCH_CM;         S.minPixels = DEF_MIN_PIXELS;
+  S.topK = DEF_TOP_K;
   S.minTriggerCm = DEF_MIN_TRIGGER_CM;       S.absentMarginCm = DEF_ABSENT_MARGIN_CM;
   S.remeasureDeltaCm = DEF_REMEASURE_DELTA_CM;
   S.calLowCm = DEF_CAL_LOW_CM;               S.calHighCm = DEF_CAL_HIGH_CM;
@@ -315,8 +325,14 @@ void setState(State s) {
 }
 void enterIdle() { setState(ST_IDLE); idleStart = nowMs; personStreakStart = 0; }
 
-// Standing box -> Rock64 (USB serial only; Bluetooth doesn't need sensor traffic)
-void sendBox() { Serial.printf("#BOX %.1f %.1f %.1f %.1f\n", S.boxW, S.boxD, S.boxX, S.boxY); }
+// Camera settings -> Rock64 (USB serial only; Bluetooth doesn't need sensor traffic)
+void sendCamera() {
+  Serial.printf("#BOX %.1f %.1f %.1f %.1f\n", S.boxW, S.boxD, S.boxX, S.boxY);
+  Serial.printf("#CFG %.2f %ld %ld\n", S.headPatchCm, (long)S.minPixels, (long)S.topK);
+}
+bool isCameraParam(const char* n) {
+  return !strncmp(n, "box", 3) || !strcmp(n, "headpatch") || !strcmp(n, "minpixels") || !strcmp(n, "topk");
+}
 
 void startDazzle() {
   nDz = 0; remStart = 0; steadySince = nowMs; lastSteadyCheck = nowMs;
@@ -439,7 +455,7 @@ void onReading(bool valid, float h) {
 void onSensorLine(const String& l) {
   if (l.startsWith("#HELLO")) {                     // before "#H"
     out("camera: Rock64 connected");
-    sendBox();
+    sendCamera();
   } else if (l.startsWith("#H")) {
     float raw = l.substring(2).toFloat();
     lastRawCm = raw;
@@ -836,7 +852,8 @@ void printStatus() {
   out("state=%s sim=%s demo=%s watch=%s", STATE_NAMES[state], simOn ? "on" : "off", demoOn ? "on" : "off", watchOn ? "on" : "off");
   out("last: camera=%.1f cm  height=%.1f cm (%s)  calfactor=%.3f caloffset=%.1f",
       lastRawCm, lastHeight, RC_NAMES[lastClass], S.calFactor, S.calOffsetCm);
-  out("box %.0f x %.0f cm at x %.0f y %.0f", S.boxW, S.boxD, S.boxX, S.boxY);
+  out("box %.0f x %.0f cm at x %.0f y %.0f  headpatch %.1f cm  minpixels %ld  topk %ld",
+      S.boxW, S.boxD, S.boxX, S.boxY, S.headPatchCm, (long)S.minPixels, (long)S.topK);
   out("last measured=%.1f cm  visible LEDs=%d (raw %d..%d) reversed=%s", measuredCm, nVis, visLo, visHi, reversed ? "yes" : "no");
   out("top visible LED = %.1f cm", visToHeight(nVis - 1));
   out("visitors: season=%lu tonight=%lu  uptime=%lus", (unsigned long)seasonCount, (unsigned long)tonightCount, (unsigned long)(nowMs / 1000));
@@ -908,7 +925,7 @@ void handleCmd(String line, Src src) {
       }
       if (p.type == PT_F) prefs.putFloat(p.key, *(float*)p.ptr); else prefs.putInt(p.key, *(int32_t*)p.ptr);
       recomputeMapping();
-      if (!strncmp(p.name, "box", 3)) sendBox();
+      if (isCameraParam(p.name)) sendCamera();
       printParam(p);
       return;
     }
@@ -917,7 +934,7 @@ void handleCmd(String line, Src src) {
   }
   if (!strcmp(c, "defaults")) {
     prefs.clear(); prefs.putUInt("visits", seasonCount);
-    setDefaults(); recomputeMapping(); sendBox();
+    setDefaults(); recomputeMapping(); sendCamera();
     out("defaults restored");
     return;
   }
@@ -1069,7 +1086,7 @@ void setup() {
   nowMs = millis();
   lastFrameMs = nowMs; simLastMs = nowMs; lastRenderMs = nowMs;
   out("North Pole ready. season visitors=%lu. Type 'help'.%s", (unsigned long)seasonCount, simOn ? " [SIM at boot]" : "");
-  sendBox();                                // in case the Rock64 is already running
+  sendCamera();                                // in case the Rock64 is already running
   enterIdle();
 }
 

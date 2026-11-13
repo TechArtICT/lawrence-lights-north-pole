@@ -22,6 +22,9 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 | `caloffset` | 0 | … + this (cm) = displayed height. |
 | `boxw`, `boxd` | 50, 50 | Standing box size in cm on the floor (image x, y). A person counts when the top of their head is inside it. Sent to the Rock64. |
 | `boxx`, `boxy` | 0, 0 | Box center in cm from the point directly under the camera. |
+| `headpatch` | 3 | Rock64: height = median of the person's pixels within this radius (cm) of the top of the head. |
+| `minpixels` | 150 | Rock64: blobs smaller than this are noise, not people. Lower it if small children aren't detected. |
+| `topk` | 40 | Rock64: this many highest pixels of a person locate the top of the head. |
 | `mintrigger` | 70 | Shortest height that starts the show. Set with toddlers in mind. |
 | `presencetime` | 500 | Height must hold this long to trigger. |
 | `absentmargin` | 15 | Reading within this of ground = nobody there. |
