@@ -27,7 +27,7 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 | `topk` | 40 | Rock64: this many highest pixels of a person locate the top of the head. |
 | `mintrigger` | 70 | Shortest height that starts the show. Set with toddlers in mind. |
 | `presencetime` | 500 | Height must hold this long to trigger. |
-| `absentmargin` | 15 | Reading within this of ground = nobody there. |
+| `absentmargin` | 15 | Height at or below this = nobody there. |
 | `holdtime` | 1000 | Show continues this long after the person steps away. |
 | `remeasuredelta` | 10 | Height change that counts as a different person. |
 | `remeasuretime` | 500 | New height must hold this long before restarting. |
@@ -64,7 +64,7 @@ Compile-time only: `SIM_AT_BOOT` (false), `BT_NAME` (`NorthPoleLidar`), `BT_PASS
   - Height shifts by `remeasuredelta` for `remeasuretime` → back to DAZZLE (different person).
   - Gone for `holdtime` → OUTRO.
 - **OUTRO** — random outro animation → IDLE (idle fades in, never a cut). A new person arriving during the outro starts a new dazzle.
-- **FAULT** — no frames from the sensor for ~1 s: idle animation only, report the fault, return to IDLE when frames resume.
+- **FAULT** — no lines from the Rock64 for ~1 s: idle animation only, report the fault, return to IDLE when lines resume.
 
 Height comes from the Rock64 (height above the recorded empty scene) × `calfactor` + `caloffset`. Gone = no person reading for `holdtime` and a nobody reading seen since (or 5 s with no person reading at all). Unknown readings (head cut off at the edge of the view, someone reaching into the box, calibrating) never count as gone.
 
@@ -109,14 +109,14 @@ Both channels are identical: all status output goes to both, and every command i
 
 - State changes.
 - Each measurement: height in cm and ft/in, sample count, spread, which dazzle/show was picked.
-- Ground calibration and learning, faults, boot info, visitor counts.
+- Messages from the Rock64 (`camera: …`: connected, calibrating, calibrated), faults, boot info, visitor counts.
 
 ### Commands
 
 | Command | Unlock needed | Action |
 |---|---|---|
 | `help` | no | List commands. |
-| `status` | no | Current state, last reading, ground distance, mapping, counts. |
+| `status` | no | Current state, last camera height and displayed height, `calfactor`/`caloffset`, box and Rock64 settings, LED mapping, counts. |
 | `get` | no | List all settings. |
 | `count` | no | Season total and tonight's count. |
 | `watch on` / `watch off` | no | Stream live readings 5×/s (camera height, displayed height, class). |
@@ -137,6 +137,31 @@ Both channels are identical: all status output goes to both, and every command i
 | `demo on` / `demo off` | yes | Loop the full cycle automatically with random heights and occasional swaps. |
 | `play <type> [name]` / `play stop` | yes | Loop one animation outside the state machine. Types: `idle`, `dazzle`, `rise`, `show`, `outro`, `offcharts`. Uses the last simulated height (or 120 cm). |
 | `next <dazzle\|show\|outro> <name>` | yes | Force the next random pick for that type (one time). |
+
+## Rock64 link
+
+USB serial, 115200, one line per message. Lines starting with `#` are sensor traffic; anything else from the Rock64's side would be treated as a command.
+
+| Direction | Line | Meaning |
+|---|---|---|
+| Rock64 → ESP32 | `#H <cm>` | Height above the empty scene, ~30 per second. `#H 0` = nobody. |
+| Rock64 → ESP32 | `#U` | Unknown: head at the edge of the view, someone outside the box reaching in, or calibrating. Never counts as gone. |
+| Rock64 → ESP32 | `#I <text>` | Information, shown as `camera: <text>`. |
+| Rock64 → ESP32 | `#HELLO` | Rock64 (re)connected; the ESP32 answers with `#BOX` and `#CFG`. |
+| ESP32 → Rock64 | `#BOX <w> <d> <x> <y>` | Standing box (cm). Sent at ESP32 boot, on `#HELLO`, and when a box setting changes. |
+| ESP32 → Rock64 | `#CFG <headpatch> <minpixels> <topk>` | Measuring settings, sent with `#BOX`. |
+| ESP32 → Rock64 | `#CAL` | `calibrate camera`. |
+
+No `#` line for 1 s → FAULT.
+
+## Measuring (Rock64, `rock64/height.py`)
+
+- Depth 640×480 at 30 fps (USB 2), halved to 320×240 by the RealSense decimation filter.
+- Empty scene: per-pixel median of ~30 frames over 3 s; pixels without a reading in half the frames are ignored. Recorded 2 s after every start and on `calibrate camera`.
+- A pixel more than 10 cm above the empty scene is "person". Touching person pixels form blobs; a depth step of more than 25 cm between neighbors splits them (one person in front of another, seen from above). Blobs smaller than `minpixels` are noise.
+- Per blob: the `topk` highest pixels, using only their densest group (within 10 cm), locate the top of the head; height = median of the blob's pixels within `headpatch` of it.
+- A blob counts when its top of head is inside the box; the tallest one wins. Someone outside the box reaching in → `#U`. Top of head within 6 pixels of the edge of the view → `#U` (may be cut off).
+- Depth is distance from the camera plane, so off-center heads need no angle correction. The usable area shrinks with height (a cone): at 10 ft, heads up to 200 cm stay fully in view within about ±100 × ±58 cm.
 
 ## Bench testing
 

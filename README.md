@@ -23,19 +23,59 @@ An Intel RealSense depth camera looks down from the arm above the pole; a Rock64
 
 Add a 500–1000 µF capacitor across the strip's power input. Program with USB VBUS disconnected when the board is also fed from the supply.
 
-## Building
+## Setup
 
-1. Arduino IDE with the **esp32 by Espressif Systems** board package.
-2. Library Manager: **NeoPixelBus by Makuna**. (BluetoothSerial and Preferences come with the ESP32 core.)
-3. Open `north_pole/north_pole.ino`, board **ESP32 Dev Module**, upload.
+### Rock64
 
-Or on the Rock64: `bash rock64/setup-arduino.sh` once, then `bash rock64/flash.sh` to compile and flash over the USB link.
+Ubuntu 20.04. Plug the camera into a **USB 2** port: on this Rock64 the USB 3 port failed to start the camera when it was plugged in at boot. The ESP32's USB (VBUS disconnected) goes to another USB port.
 
-Rock64 (Ubuntu 20.04, Python 3.9 venv at `~/rs`): `~/rs/bin/pip install pyrealsense2 numpy scipy esptool`, then `~/rs/bin/python rock64/height.py calibrate` with nobody in view, and `~/rs/bin/python rock64/height.py` to run. For the field: `bash rock64/install-service.sh` once, so it starts at boot; watch it with `journalctl -u northpole-height -f`.
+```bash
+sudo apt install python3.9 python3.9-venv git
+python3.9 -m venv ~/rs                     # pyrealsense2 for 64-bit ARM needs Python 3.9, 3.10 or 3.12
+~/rs/bin/pip install pyrealsense2 numpy scipy esptool
+sudo usermod -aG dialout $USER             # serial port access; log out and back in
+git clone https://github.com/TechArtICT/lawrence-lights-north-pole.git
+cd lawrence-lights-north-pole
+bash rock64/install-service.sh             # height.py starts at every boot
+```
+
+Service:
+
+| Command | Does |
+|---|---|
+| `journalctl -u northpole-height -f` | Live output, including the ESP32's lines (`esp32\| …`). Ctrl+C stops watching. |
+| `sudo systemctl restart northpole-height` | Restart, e.g. after `git pull`. |
+| `sudo systemctl stop northpole-height` | Stop, e.g. to run `height.py` by hand. |
+
+`height.py` by hand (service stopped), from the repo folder:
+
+| Command | Does |
+|---|---|
+| `~/rs/bin/python rock64/height.py` | Normal run, linked to the ESP32. |
+| `~/rs/bin/python rock64/height.py noserial` | Same, terminal only, default box (50 × 50). |
+| `~/rs/bin/python rock64/height.py nobox` | Terminal only, whole view counts. For finding the standing spot. |
+| `~/rs/bin/python rock64/height.py calibrate` | Record the empty scene and exit. |
+
+Every run records the empty scene 2 s after it starts, so keep the area clear for ~5 s after power-on or a restart.
+
+### ESP32 firmware
+
+On the Rock64 (compiles and flashes over the USB link; stops and restarts the service):
+
+```bash
+bash rock64/setup-arduino.sh      # once: arduino-cli, ESP32 core 3.3.7, NeoPixelBus (~1 GB download)
+~/bin/arduino-cli cache clean     # once afterwards: frees the ~1.5 GB of downloaded archives
+bash rock64/flash.sh              # compile + flash
+bash rock64/flash.sh compile      # compile only
+```
+
+Or from a laptop: Arduino IDE with **esp32 by Espressif Systems** and the library **NeoPixelBus by Makuna**; open `north_pole/north_pole.ino`, board **ESP32 Dev Module**, upload.
+
+Settings saved with `set` survive flashing. To pick up new code defaults after flashing, run `defaults` (resets every setting, keeps the visitor count).
 
 ## Using it
 
-Connect over USB serial (115200, line ending "Newline") or Bluetooth Classic serial (pair with `NorthPoleLidar`, e.g. the Android app "Serial Bluetooth Terminal"). Type `help`.
+Connect over Bluetooth Classic serial (pair with `NorthPoleLidar`, e.g. the Android app "Serial Bluetooth Terminal") or USB serial (115200, line ending "Newline"). Type `help`.
 
 Over Bluetooth, commands that change anything need `unlock ll` first. USB is always unlocked.
 
@@ -43,13 +83,16 @@ The Bluetooth password is committed to this public repo on purpose, for simplici
 
 ### Field setup
 
-1. Power on. The Rock64 starts `height.py`, which links to the ESP32.
-2. `watch on` to see live readings.
-3. Find the LEDs that line up with the 1 ft and 6 ft marks with `led <n>`, then:
-   `set callowled <n>`, `set calhighled <n>`.
-4. Set the visible range: `set firstled <n>`, `set lastled <n>`.
-5. `calibrate camera` with nobody in view (starts after 5 s), and set the standing box with `boxw`, `boxd`, `boxx`, `boxy`.
-6. Tune `brightness`, `idlelevel`, `mintrigger` as needed. Everything set this way is saved to flash.
+1. Power on and keep the area clear for ~10 s while the Rock64 records the empty scene (`camera: calibrated` over Bluetooth).
+2. `watch on` to see live heights (`camera=` is the Rock64's number, `h=` the displayed one).
+3. LED marks: defaults are `callowled` 120 (1 ft) and `calhighled` 28 (6 ft). Check with `led <n>` / `led off`, change with `set callowled <n>`, `set calhighled <n>`. Visible range: `set firstled <n>`, `set lastled <n>`.
+4. Standing box (default 50 × 50 cm under the camera): stand on the spot and read "head at x / y" in `journalctl -u northpole-height -f`, then `set boxx <x>`, `set boxy <y>`. Size with `boxw` (camera's wide direction) and `boxd` (narrow direction).
+5. Check against a known height. Off by a fixed amount: `set caloffset <cm>`; off by a percentage: `set calfactor <x>`.
+6. Small children not detected: lower `minpixels` (default 150).
+7. `calibrate camera` (starts after 5 s; step out of view) after moving the camera or when something permanent in view changes, e.g. snow.
+8. Tune `brightness`, `idlelevel`, `mintrigger` as needed. Everything set this way is saved to flash.
+
+All settings and commands: [`docs/software-spec.md`](docs/software-spec.md).
 
 ### Bench testing (no real measurements needed)
 
