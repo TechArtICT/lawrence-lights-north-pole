@@ -20,7 +20,7 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 |---|---|---|
 | `calfactor` | 1.0 | Camera height × this … |
 | `caloffset` | 0 | … + this (cm) = displayed height. |
-| `boxw`, `boxd` | 100, 100 | Standing box size in cm on the floor (image x, y). Sent to the Rock64. |
+| `boxw`, `boxd` | 50, 50 | Standing box size in cm on the floor (image x, y). A person counts when the top of their head is inside it. Sent to the Rock64. |
 | `boxx`, `boxy` | 0, 0 | Box center in cm from the point directly under the camera. |
 | `mintrigger` | 70 | Shortest height that starts the show. Set with toddlers in mind. |
 | `presencetime` | 500 | Height must hold this long to trigger. |
@@ -30,12 +30,13 @@ Defaults live at the top of the code (`DEF_*`). Every value can also be changed 
 | `remeasuretime` | 500 | New height must hold this long before restarting. |
 | `firstled` | 0 | Raw index of lowest-numbered visible LED. |
 | `lastled` | 145 | Raw index of highest-numbered visible LED. |
-| `callowled` | 20 | Raw LED index lined up with the low calibration mark. Placeholder; set in field. |
+| `callowled` | 120 | Raw LED index lined up with the low calibration mark. |
 | `callowcm` | 30.48 | Height of that mark in cm (30.48 cm = 1 ft). |
-| `calhighled` | 130 | Raw LED index lined up with the high calibration mark. Placeholder; set in field. |
+| `calhighled` | 28 | Raw LED index lined up with the high calibration mark. |
 | `calhighcm` | 182.88 | Height of that mark in cm (182.88 cm = 6 ft). |
 | `brightness` | 128 (of 255) | Global cap. |
-| `dazzletime` | 3000 | Also the measurement window. |
+| `dazzletime` | 3000 | The height must hold steady this long to be measured; the dazzle runs until it does. |
+| `dazzlemax` | 10000 | The dazzle never runs longer than this; if the height never settled, the last second is used. |
 | `risespeed` | 60 LEDs/s | Average speed; ease-out (fast start, slows near the top). |
 | `drainspeed` | 40 LEDs/s | Average speed of the drain outro. |
 | `idlefade` | 1000 | Idle fades in after the outro. |
@@ -54,7 +55,7 @@ Compile-time only: `SIM_AT_BOOT` (false), `BT_NAME` (`NorthPoleLidar`), `BT_PASS
 ## States
 
 - **IDLE** — attract animation at `idlelevel`. Trigger when height ≥ `mintrigger` holds for `presencetime` → DAZZLE.
-- **DAZZLE** — random dazzle animation for `dazzletime`. Collect every valid sample; height = **median**. Person leaves → dissolve outro → IDLE.
+- **DAZZLE** — random dazzle animation while the height is measured. Every 0.1 s the newest 0.5 s of samples is compared with the older ones; if they differ by more than `remeasuredelta` (stepped in, stood up, sibling swap) the older samples are dropped. Once `dazzletime` of samples agree (10–90% spread within `remeasuredelta`), height = their **median**. Never longer than `dazzlemax`: then the median of the last second. Person leaves → dissolve outro → IDLE.
 - **RISE** — column grows from the bottom to the measured height with ease-out.
 - **SHOW** — random show mode with a gold star at the height (off-the-charts variant if above the top LED); loops until the person leaves.
   - Height shifts by `remeasuredelta` for `remeasuretime` → back to DAZZLE (different person).

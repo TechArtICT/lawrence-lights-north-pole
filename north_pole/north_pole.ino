@@ -37,8 +37,8 @@
 // =====================================================================
 #define DEF_CAL_FACTOR              1.0f  // camera height x this ...
 #define DEF_CAL_OFFSET_CM           0.0f  // ... + this = displayed height
-#define DEF_BOX_W_CM              100.0f  // standing box (cm on the floor), sent to the Rock64
-#define DEF_BOX_D_CM              100.0f
+#define DEF_BOX_W_CM               50.0f  // standing box (cm on the floor), sent to the Rock64
+#define DEF_BOX_D_CM               50.0f
 #define DEF_BOX_X_CM                0.0f  // box center offset from the point under the camera
 #define DEF_BOX_Y_CM                0.0f
 #define DEF_MIN_TRIGGER_CM         70.0f  // shortest height that starts the show
@@ -49,12 +49,13 @@
 #define DEF_REMEASURE_STABLE_MS   500     // ...held this long before re-measuring
 #define DEF_FIRST_VIEW_LED          0     // raw index of the lowest-numbered visible LED
 #define DEF_LAST_VIEW_LED         145     // raw index of the highest-numbered visible LED
-#define DEF_CAL_LOW_LED            20     // raw LED index at the 1 ft mark (placeholder)
+#define DEF_CAL_LOW_LED           120     // raw LED index at the 1 ft mark
 #define DEF_CAL_LOW_CM             30.48f
-#define DEF_CAL_HIGH_LED          130     // raw LED index at the 6 ft mark (placeholder)
+#define DEF_CAL_HIGH_LED           28     // raw LED index at the 6 ft mark
 #define DEF_CAL_HIGH_CM           182.88f
 #define DEF_BRIGHTNESS_MAX        128     // 1-255 global cap
-#define DEF_DAZZLE_MS            3000     // dazzle length = measurement window
+#define DEF_DAZZLE_MS            3000     // height must hold steady this long to be measured
+#define DEF_DAZZLE_MAX_MS       10000     // dazzle never runs longer than this
 #define DEF_RISE_SPEED             60.0f  // average LEDs/second for the thermometer rise
 #define DEF_DRAIN_SPEED            40.0f  // average LEDs/second for the drain outro
 #define DEF_IDLE_FADE_IN_MS      1000
@@ -74,7 +75,9 @@
 #define FAULT_MS          1000   // no sensor lines this long -> FAULT
 #define STALE_GONE_MS     5000   // no person reading this long -> gone, even without a ground reading
 #define MIN_SAMPLES         20   // fewer valid samples in the dazzle -> measurement fails
-#define MAX_DZ            2000   // sample buffer (20 s at 100 Hz)
+#define MAX_DZ            1200   // sample buffer (40 s from the camera, 12 s in sim)
+#define STEADY_RECENT_MS   500   // dazzle: the newest this-much of samples ...
+#define STEADY_CHECK_MS    100   // ... is compared with the older ones this often
 #define WDT_TIMEOUT_S        8
 #define FRAME_MS            16   // ~60 fps
 
@@ -113,7 +116,7 @@ struct Settings {
   float   minTriggerCm, absentMarginCm, remeasureDeltaCm;
   float   calLowCm, calHighCm, riseSpeed, drainSpeed;
   int32_t presenceStableMs, holdAfterLeaveMs, remeasureStableMs;
-  int32_t firstViewLed, lastViewLed, calLowLed, calHighLed, brightnessMax, dazzleMs, idleFadeInMs;
+  int32_t firstViewLed, lastViewLed, calLowLed, calHighLed, brightnessMax, dazzleMs, dazzleMaxMs, idleFadeInMs;
   int32_t idleLevelPct, idleSpeedPct;
 };
 
@@ -143,6 +146,7 @@ Param params[] = {
   {"calhighcm",      "cal_hi_cm",  "cm",       PT_F, &S.calHighCm,          0, 400},
   {"brightness",     "bright",     "0-255",    PT_I, &S.brightnessMax,      1, 255},
   {"dazzletime",     "dazzle_ms",  "ms",       PT_I, &S.dazzleMs,         500, 20000},
+  {"dazzlemax",      "dazzle_max", "ms",       PT_I, &S.dazzleMaxMs,     1000, 30000},
   {"risespeed",      "rise_spd",   "leds/s",   PT_F, &S.riseSpeed,          1, 1000},
   {"drainspeed",     "drain_spd",  "leds/s",   PT_F, &S.drainSpeed,         1, 1000},
   {"idlefade",       "idle_fade",  "ms",       PT_I, &S.idleFadeInMs,       0, 10000},
@@ -175,7 +179,9 @@ float    lastRawCm = 0, lastHeight = 0;
 ReadClass lastClass = RC_UNKNOWN;
 
 // Measurement
-float dz[MAX_DZ]; int nDz = 0;
+float    dz[MAX_DZ]; uint32_t dzT[MAX_DZ]; int nDz = 0;   // dazzle samples + their times
+float    dzTmp[MAX_DZ];
+uint32_t steadySince = 0, lastSteadyCheck = 0;           // start of the current steady stretch
 float measuredCm = 0, targetVis = 0;
 int   starPix = 0;
 bool  offCharts = false;
@@ -284,6 +290,7 @@ void setDefaults() {
   S.firstViewLed = DEF_FIRST_VIEW_LED;       S.lastViewLed = DEF_LAST_VIEW_LED;
   S.calLowLed = DEF_CAL_LOW_LED;             S.calHighLed = DEF_CAL_HIGH_LED;
   S.brightnessMax = DEF_BRIGHTNESS_MAX;      S.dazzleMs = DEF_DAZZLE_MS;
+  S.dazzleMaxMs = DEF_DAZZLE_MAX_MS;
   S.idleFadeInMs = DEF_IDLE_FADE_IN_MS;      S.idleLevelPct = DEF_IDLE_LEVEL_PCT;
   S.idleSpeedPct = DEF_IDLE_SPEED_PCT;
 }
@@ -312,7 +319,7 @@ void enterIdle() { setState(ST_IDLE); idleStart = nowMs; personStreakStart = 0; 
 void sendBox() { Serial.printf("#BOX %.1f %.1f %.1f %.1f\n", S.boxW, S.boxD, S.boxX, S.boxY); }
 
 void startDazzle() {
-  nDz = 0; remStart = 0;
+  nDz = 0; remStart = 0; steadySince = nowMs; lastSteadyCheck = nowMs;
   dazzleIdx = forcedDazzle >= 0 ? forcedDazzle : (int)random(N_DAZZLE);
   forcedDazzle = -1;
   setState(ST_DAZZLE);
@@ -332,6 +339,51 @@ void startOutro(bool forceDissolve, bool hasStar) {
   initDissolve();
   setState(ST_OUTRO);
   out("outro: %s", OUTRO_NAMES[outroIdx]);
+}
+
+// Keep only the dazzle samples taken at or after time t.
+void keepSamplesSince(uint32_t t) {
+  int j = 0;
+  for (int i = 0; i < nDz; i++) if ((int32_t)(dzT[i] - t) >= 0) { dz[j] = dz[i]; dzT[j] = dzT[i]; j++; }
+  nDz = j;
+}
+float medianOf(float* a, int n) {
+  std::sort(a, a + n);
+  return (n % 2) ? a[n / 2] : 0.5f * (a[n / 2 - 1] + a[n / 2]);
+}
+// During the dazzle: if the newest samples disagree with the older ones by more than
+// remeasuredelta (someone stepped in, stood up, swapped), drop the older ones and start
+// the steady stretch again.
+void checkSteady() {
+  if (nowMs - lastSteadyCheck < STEADY_CHECK_MS) return;
+  lastSteadyCheck = nowMs;
+  uint32_t cut = nowMs - STEADY_RECENT_MS;
+  int nOld = 0, nNew = 0;
+  for (int i = 0; i < nDz; i++) if ((int32_t)(dzT[i] - cut) < 0) dzTmp[nOld++] = dz[i];
+  if (nOld < 5) return;
+  float oldMed = medianOf(dzTmp, nOld);
+  for (int i = 0; i < nDz; i++) if ((int32_t)(dzT[i] - cut) >= 0) dzTmp[nNew++] = dz[i];
+  if (nNew < 5) return;
+  float newMed = medianOf(dzTmp, nNew);
+  if (fabsf(newMed - oldMed) > S.remeasureDeltaCm) {
+    out("%sdazzle: height changed %.0f -> %.0f cm, waiting for it to settle", simTag(), oldMed, newMed);
+    keepSamplesSince(cut);
+    steadySince = cut;
+  }
+}
+
+// The steady stretch is long enough: is it really steady (10-90% spread within
+// remeasuredelta)? If not (a slow drift), drop its older half and keep measuring.
+bool stretchIsSteady() {
+  for (int i = 0; i < nDz; i++) dzTmp[i] = dz[i];
+  std::sort(dzTmp, dzTmp + nDz);
+  float spread = dzTmp[(nDz * 9) / 10] - dzTmp[nDz / 10];
+  if (spread <= S.remeasureDeltaCm) return true;
+  uint32_t half = nowMs - (uint32_t)S.dazzleMs / 2;
+  out("%sdazzle: still changing (spread %.0f cm), waiting for it to settle", simTag(), spread);
+  keepSamplesSince(half);
+  steadySince = half;
+  return false;
 }
 
 void finishMeasurement() {
@@ -372,7 +424,7 @@ void onReading(bool valid, float h) {
   if (rc == RC_PERSON) {
     lastPersonMs = nowMs;
     if (!personStreakStart) personStreakStart = nowMs;
-    if (state == ST_DAZZLE && nDz < MAX_DZ) dz[nDz++] = h;
+    if (state == ST_DAZZLE && nDz < MAX_DZ) { dz[nDz] = h; dzT[nDz] = nowMs; nDz++; }
     if (state == ST_RISE || state == ST_SHOW) {
       if (fabsf(h - measuredCm) > S.remeasureDeltaCm) { if (!remStart) remStart = nowMs; }
       else remStart = 0;
@@ -479,8 +531,16 @@ void updateState() {
       if (triggered()) startDazzle();
       break;
     case ST_DAZZLE:
-      if (personGone()) { out("%sabort: person left during dazzle", simTag()); startOutro(true, false); }
-      else if (nowMs - stateStart >= (uint32_t)S.dazzleMs) finishMeasurement();
+      if (personGone()) { out("%sabort: person left during dazzle", simTag()); startOutro(true, false); break; }
+      checkSteady();
+      if (nowMs - steadySince >= (uint32_t)S.dazzleMs && nDz >= MIN_SAMPLES) {
+        if (stretchIsSteady()) finishMeasurement();
+      }
+      else if (nowMs - stateStart >= (uint32_t)S.dazzleMaxMs) {
+        out("%sdazzle: never settled in %.0f s; using the last second", simTag(), S.dazzleMaxMs / 1000.0f);
+        keepSamplesSince(nowMs - 1000);
+        finishMeasurement();
+      }
       break;
     case ST_RISE:
     case ST_SHOW:

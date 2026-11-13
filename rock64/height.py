@@ -39,8 +39,8 @@ import pyrealsense2 as rs
 from scipy import ndimage
 
 # ---- defaults (the ESP32 sends the box when linked) ----
-BOX_W_CM = 100.0       # standing box size along the image x axis
-BOX_D_CM = 100.0       # standing box size along the image y axis
+BOX_W_CM = 50.0        # standing box size along the image x axis
+BOX_D_CM = 50.0        # standing box size along the image y axis
 BOX_X_CM = 0.0         # box center, cm from the point directly under the camera (image x)
 BOX_Y_CM = 0.0         # box center, cm from the point directly under the camera (image y)
 FG_MARGIN_CM = 10.0    # must be this far above the empty scene to count as person
